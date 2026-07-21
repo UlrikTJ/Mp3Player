@@ -1,0 +1,29 @@
+# Android-specific ignores
+.gradle/
+build/
+app/build/
+local.properties
+.kotlin/
+
+# IDE files
+.idea/
+*.iml
+.idea/workspace.xml
+.idea/caches/
+.idea/libraries/
+
+# Python backend files
+server/venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.project
+.pydevproject
+
+# OS temporary files
+.DS_Store
+Thumbs.db
+desktop.ini

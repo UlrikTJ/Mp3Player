@@ -1,0 +1,4 @@
+- [x] Update `libs.versions.toml` with Gson 2.11.0
+- [x] Add Gson dependency to `app/build.gradle.kts`
+- [x] Fix `fetchSearchSuggestions` in `MusicViewModel.kt`
+- [x] Run Gradle Sync and Build

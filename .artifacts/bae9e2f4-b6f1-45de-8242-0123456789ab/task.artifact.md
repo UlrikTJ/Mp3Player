@@ -1,0 +1,4 @@
+- [x] Update `libs.versions.toml` with Kotlin 2.4.10 and KSP 2.3.10
+- [x] Verify `app/build.gradle.kts` for built-in Kotlin compatibility
+- [x] Run Gradle Sync
+- [x] Run `app:assembleDebug` to verify the build

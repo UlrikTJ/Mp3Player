@@ -1,0 +1,81 @@
+package com.mp3player.playback
+
+import com.mp3player.data.dao.SongStats
+import com.mp3player.data.entity.SongEntity
+import kotlin.random.Random
+
+object ShuffleEngine {
+
+    /**
+     * Selects the next song from a list of candidates based on weighted probabilities.
+     * Includes cooldown buffer (excluding recently played songs) and automatic modifiers.
+     */
+    fun selectNextSong(
+        songs: List<SongEntity>,
+        statsMap: Map<Int, SongStats>,
+        history: List<Int>, // list of song IDs representing recently played history
+        cooldownSize: Int = 3,
+        useSkipPenalty: Boolean = true,
+        useKeeperBonus: Boolean = true
+    ): SongEntity? {
+        if (songs.isEmpty()) return null
+        if (songs.size == 1) return songs[0]
+
+        // 1. Filter out recently played songs based on cooldown buffer
+        val effectiveCooldown = minOf(cooldownSize, songs.size - 1)
+        val recentlyPlayedIds = history.takeLast(effectiveCooldown).toSet()
+        val candidates = songs.filter { it.id !in recentlyPlayedIds }
+
+        if (candidates.isEmpty()) {
+            return songs.random() // Fallback
+        }
+
+        // 2. Compute effective weights for each candidate
+        val weights = candidates.map { song ->
+            val stats = statsMap[song.id]
+            val baseWeight = song.baseWeight
+
+            // Auto-modifiers:
+            var modifier = 1.0f
+
+            if (stats != null) {
+                // A. Skip Penalty: reduce weight based on skip rate
+                if (useSkipPenalty && stats.totalPlays > 2) {
+                    val skipRate = stats.skipRate
+                    // If skip rate is > 50%, reduce the weight proportionally (down to a minimum of 10% of base weight)
+                    if (skipRate > 0.5f) {
+                        modifier *= maxOf(0.1f, 1.0f - (skipRate * 0.8f))
+                    }
+                }
+
+                // B. Keeper Bonus: boost weight of songs that are frequent landing points
+                if (useKeeperBonus && stats.keeperCount > 0) {
+                    // Small exponential boost based on keeper occurrences
+                    modifier *= (1.0f + (stats.keeperCount * 0.15f))
+                }
+            }
+
+            val effectiveWeight = baseWeight * modifier
+            // Clamp effective weight between 0.05 and 15.0 to prevent division by zero or excessive domination
+            maxOf(0.05f, minOf(15.0f, effectiveWeight))
+        }
+
+        // 3. Perform Weighted Random Selection
+        val sumOfWeights = weights.sum()
+        if (sumOfWeights <= 0) {
+            return candidates.random()
+        }
+
+        val target = Random.nextFloat() * sumOfWeights
+        var cumulative = 0.0f
+        
+        for (i in candidates.indices) {
+            cumulative += weights[i]
+            if (target <= cumulative) {
+                return candidates[i]
+            }
+        }
+
+        return candidates.last()
+    }
+}

@@ -1,0 +1,7 @@
+- [x] Update `libs.versions.toml` with AGP 9.3.0, Kotlin 2.4.10, and Compose Compiler plugin
+- [x] Refactor root `build.gradle.kts` (remove `kotlin-android`, add `compose-compiler`)
+- [x] Refactor `app/build.gradle.kts` (remove `kotlin-android`, apply `compose-compiler`, migrate `kotlinOptions` and `composeOptions`)
+- [x] Upgrade Room to 2.8.4 to fix KSP2 compatibility issues
+- [x] Fix UI components and icon imports for Material 3 and Compose Compiler 2.x
+- [x] Upgrade Gradle Wrapper to 9.5.0
+- [x] Gradle Sync and Verify Build
