@@ -61,6 +61,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val _useKeeperBonus = MutableStateFlow(sharedPrefs.getBoolean("keeper_bonus", true))
     val useKeeperBonus: StateFlow<Boolean> = _useKeeperBonus
 
+    private val _isLooping = MutableStateFlow(sharedPrefs.getBoolean("is_looping", false))
+    val isLooping: StateFlow<Boolean> = _isLooping
+
+    private val _cooldownFormula = MutableStateFlow(sharedPrefs.getString("cooldown_formula", "n/3") ?: "n/3")
+    val cooldownFormula: StateFlow<String> = _cooldownFormula
+
     // API Instance
     private var apiService: ApiService? = ApiService.getInstance("http://${_serverIp.value}:8000")
 
@@ -115,6 +121,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val playbackHistory = mutableListOf<Int>() // List of song IDs
     private val currentQueue = mutableListOf<SongEntity>()
     private var currentQueueIndex = -1
+    private val playedSongIds = mutableListOf<Int>()
+
+    val activeQueue: List<SongEntity> get() = currentQueue
+    val activeQueueIndex: Int get() = currentQueueIndex
 
     init {
         statsTracker.onSessionStarted()
@@ -154,6 +164,26 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun updateKeeperBonus(enabled: Boolean) {
         _useKeeperBonus.value = enabled
         sharedPrefs.edit().putBoolean("keeper_bonus", enabled).apply()
+    }
+
+    fun toggleLooping() {
+        val newValue = !_isLooping.value
+        _isLooping.value = newValue
+        sharedPrefs.edit().putBoolean("is_looping", newValue).apply()
+    }
+
+    fun toggleShuffle() {
+        val newValue = !_useWeightedShuffle.value
+        _useWeightedShuffle.value = newValue
+        sharedPrefs.edit().putBoolean("weighted_shuffle", newValue).apply()
+        playedSongIds.clear()
+    }
+
+    fun updateCooldownFormula(formula: String) {
+        if (formula.isNotBlank()) {
+            _cooldownFormula.value = formula
+            sharedPrefs.edit().putString("cooldown_formula", formula).apply()
+        }
     }
 
     fun updateSongWeight(songId: Int, weight: Float) {
@@ -271,7 +301,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     // --- Core Playback flow ---
     fun playSongFromLibrary(song: SongEntity, playlistId: Int? = null) {
-        // Set queue and play
+        playedSongIds.clear()
         currentQueue.clear()
         currentQueue.addAll(allSongs.value)
         currentQueueIndex = currentQueue.indexOfFirst { it.id == song.id }
@@ -279,81 +309,144 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         playCurrentQueueIndex(playlistId)
     }
 
+    fun addToQueue(song: SongEntity) {
+        currentQueue.add(song)
+    }
+
     private fun playCurrentQueueIndex(playlistId: Int?) {
         if (currentQueueIndex < 0 || currentQueueIndex >= currentQueue.size) return
         val song = currentQueue[currentQueueIndex]
         
-        // Notify stats tracker of ending current song
         statsTracker.onTrackEnded(completed = false)
         statsTracker.onTrackStarted(song, playlistId)
         
-        // Push to history
         if (song.id > 0) {
             playbackHistory.add(song.id)
         }
 
-        // Get next song to pre-buffer
         val nextSong = getNextSongForQueue()
         _playerManager.value?.play(song, nextSong)
     }
 
     fun onTrackEndedEvent() {
         statsTracker.onTrackEnded(completed = true)
-        
-        // Handle natural progress to next track
-        if (_useWeightedShuffle.value) {
-            val nextSong = selectNextShuffleSong()
-            if (nextSong != null) {
-                currentQueue.clear()
-                currentQueue.add(nextSong)
-                currentQueueIndex = 0
-                playCurrentQueueIndex(null)
-            }
-        } else {
-            // Normal sequential queue advance
-            if (currentQueue.isNotEmpty()) {
-                currentQueueIndex = (currentQueueIndex + 1) % currentQueue.size
-                playCurrentQueueIndex(null)
-            }
-        }
+        selectNextTrack(completed = true)
     }
 
     private fun getNextSongForQueue(): SongEntity? {
+        if (currentQueue.isEmpty()) return null
+        
         if (_useWeightedShuffle.value) {
-            return selectNextShuffleSong()
+            val statsMap = songStats.value.associateBy { it.songId }
+            if (_isLooping.value) {
+                return ShuffleEngine.selectNextSong(
+                    songs = currentQueue,
+                    statsMap = statsMap,
+                    history = playbackHistory,
+                    cooldownFormula = _cooldownFormula.value,
+                    useSkipPenalty = _useSkipPenalty.value,
+                    useKeeperBonus = _useKeeperBonus.value
+                )
+            } else {
+                val currentSong = currentQueue.getOrNull(currentQueueIndex)
+                val tempPlayed = if (currentSong != null) playedSongIds + currentSong.id else playedSongIds
+                val pool = currentQueue.filter { it.id !in tempPlayed }
+                if (pool.isEmpty()) return null
+                return ShuffleEngine.selectNextSong(
+                    songs = pool,
+                    statsMap = statsMap,
+                    history = playbackHistory,
+                    cooldownFormula = _cooldownFormula.value,
+                    useSkipPenalty = _useSkipPenalty.value,
+                    useKeeperBonus = _useKeeperBonus.value
+                )
+            }
         } else {
             val nextIndex = currentQueueIndex + 1
-            return if (nextIndex < currentQueue.size) currentQueue[nextIndex] else null
+            return if (nextIndex < currentQueue.size) {
+                currentQueue[nextIndex]
+            } else if (_isLooping.value) {
+                currentQueue.firstOrNull()
+            } else {
+                null
+            }
         }
     }
 
-    private fun selectNextShuffleSong(): SongEntity? {
-        val statsMap = songStats.value.associateBy { it.songId }
-        return ShuffleEngine.selectNextSong(
-            songs = allSongs.value,
-            statsMap = statsMap,
-            history = playbackHistory,
-            useSkipPenalty = _useSkipPenalty.value,
-            useKeeperBonus = _useKeeperBonus.value
-        )
+    private fun selectNextTrack(completed: Boolean) {
+        if (currentQueue.isEmpty()) return
+
+        val currentSong = currentQueue.getOrNull(currentQueueIndex)
+        if (currentSong != null && completed) {
+            playedSongIds.add(currentSong.id)
+        }
+
+        if (_useWeightedShuffle.value) {
+            if (_isLooping.value) {
+                val statsMap = songStats.value.associateBy { it.songId }
+                val nextSong = ShuffleEngine.selectNextSong(
+                    songs = currentQueue,
+                    statsMap = statsMap,
+                    history = playbackHistory,
+                    cooldownFormula = _cooldownFormula.value,
+                    useSkipPenalty = _useSkipPenalty.value,
+                    useKeeperBonus = _useKeeperBonus.value
+                )
+                if (nextSong != null) {
+                    currentQueueIndex = currentQueue.indexOfFirst { it.id == nextSong.id }
+                    playCurrentQueueIndex(selectedPlaylistId.value)
+                }
+            } else {
+                val pool = currentQueue.filter { it.id !in playedSongIds }
+                if (pool.isNotEmpty()) {
+                    val statsMap = songStats.value.associateBy { it.songId }
+                    val nextSong = ShuffleEngine.selectNextSong(
+                        songs = pool,
+                        statsMap = statsMap,
+                        history = playbackHistory,
+                        cooldownFormula = _cooldownFormula.value,
+                        useSkipPenalty = _useSkipPenalty.value,
+                        useKeeperBonus = _useKeeperBonus.value
+                    )
+                    if (nextSong != null) {
+                        currentQueueIndex = currentQueue.indexOfFirst { it.id == nextSong.id }
+                        playCurrentQueueIndex(selectedPlaylistId.value)
+                    }
+                } else {
+                    _playerManager.value?.pause()
+                    playedSongIds.clear()
+                }
+            }
+        } else {
+            val nextIndex = currentQueueIndex + 1
+            if (nextIndex < currentQueue.size) {
+                currentQueueIndex = nextIndex
+                playCurrentQueueIndex(selectedPlaylistId.value)
+            } else {
+                if (_isLooping.value) {
+                    currentQueueIndex = 0
+                    playCurrentQueueIndex(selectedPlaylistId.value)
+                } else {
+                    _playerManager.value?.pause()
+                }
+            }
+        }
     }
 
     fun playNext() {
-        if (_useWeightedShuffle.value) {
-            val nextSong = selectNextShuffleSong()
-            if (nextSong != null) {
-                currentQueue.clear()
-                currentQueue.add(nextSong)
-                currentQueueIndex = 0
-                playCurrentQueueIndex(null)
-            }
-        } else if (currentQueue.isNotEmpty()) {
-            currentQueueIndex = (currentQueueIndex + 1) % currentQueue.size
-            playCurrentQueueIndex(null)
+        selectNextTrack(completed = false)
+    }
+
+    fun playPrevious() {
+        if (currentQueue.isNotEmpty()) {
+            val prevIndex = currentQueueIndex - 1
+            currentQueueIndex = if (prevIndex < 0) currentQueue.size - 1 else prevIndex
+            playCurrentQueueIndex(selectedPlaylistId.value)
         }
     }
 
     private fun playSongDirectly(song: SongEntity) {
+        playedSongIds.clear()
         statsTracker.onTrackEnded(completed = false)
         statsTracker.onTrackStarted(song, null)
         _playerManager.value?.play(song, null)
@@ -456,6 +549,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 musicDao.getSongsForPlaylist(playlistId)
             }
             if (songs.isNotEmpty()) {
+                playedSongIds.clear()
                 currentQueue.clear()
                 currentQueue.addAll(songs)
                 
@@ -468,6 +562,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                         songs = songs,
                         statsMap = statsMap,
                         history = playbackHistory,
+                        cooldownFormula = _cooldownFormula.value,
                         useSkipPenalty = _useSkipPenalty.value,
                         useKeeperBonus = _useKeeperBonus.value
                     )
@@ -703,9 +798,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         _suggestions.value = emptyList()
     }
 
-    fun addToQueue(song: SongEntity) {
-        currentQueue.add(song)
-    }
 
     fun resetPlaylistStats(playlistId: Int) {
         viewModelScope.launch(Dispatchers.IO) {

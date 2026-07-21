@@ -18,6 +18,9 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.material.icons.filled.QueueMusic
+import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
@@ -172,8 +175,8 @@ fun AppTheme(content: @Composable () -> Unit) {
 @Composable
 fun MainScreen(viewModel: MusicViewModel) {
     var selectedTab by remember { mutableIntStateOf(0) }
-    val currentSong by viewModel.playerManager.collectAsState()
-        .value?.currentPlayingSong?.collectAsState(null) ?: remember { mutableStateOf(null) }
+    val playerManager by viewModel.playerManager.collectAsState()
+    val currentSong = playerManager?.currentPlayingSong?.collectAsState(null)?.value
 
     Scaffold(
         bottomBar = {
@@ -237,6 +240,7 @@ fun MiniPlayer(song: SongEntity, viewModel: MusicViewModel) {
     val playerManager = viewModel.playerManager.collectAsState().value ?: return
     val isPlaying by playerManager.isPlaying.collectAsState()
     var showFullPlayer by remember { mutableStateOf(false) }
+    var showQueue by remember { mutableStateOf(false) }
 
     Row(
         modifier = Modifier
@@ -286,12 +290,20 @@ fun MiniPlayer(song: SongEntity, viewModel: MusicViewModel) {
         }
         
         IconButton(onClick = { viewModel.playNext() }) {
-            Icon(Icons.Default.PlayArrow, contentDescription = "Next", tint = Color.White)
+            Icon(Icons.Default.SkipNext, contentDescription = "Next", tint = Color.White)
+        }
+
+        IconButton(onClick = { showQueue = true }) {
+            Icon(Icons.Default.QueueMusic, contentDescription = "Queue", tint = Color.White)
         }
     }
 
     if (showFullPlayer) {
         FullPlayerDialog(song = song, viewModel = viewModel, onDismiss = { showFullPlayer = false })
+    }
+
+    if (showQueue) {
+        QueueDialog(viewModel = viewModel, onDismiss = { showQueue = false })
     }
 }
 
@@ -1465,107 +1477,217 @@ fun FullPlayerDialog(song: SongEntity, viewModel: MusicViewModel, onDismiss: () 
     val progress by playerManager.playbackProgress.collectAsState()
     val duration = playerManager.getDuration()
     
-    var weightInput by remember { mutableFloatStateOf(song.baseWeight) }
+    val isLooping by viewModel.isLooping.collectAsState()
+    val useWeightedShuffle by viewModel.useWeightedShuffle.collectAsState()
+    val cooldownFormula by viewModel.cooldownFormula.collectAsState()
+    
+    var showTuningSheet by remember { mutableStateOf(false) }
+    var showQueueDialog by remember { mutableStateOf(false) }
 
-    Dialog(onDismissRequest = onDismiss) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
         Surface(
             modifier = Modifier.fillMaxSize(),
             color = MaterialTheme.colorScheme.background
         ) {
             Column(
-                modifier = Modifier.fillMaxSize().padding(24.dp),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
+                verticalArrangement = Arrangement.SpaceBetween
             ) {
-                IconButton(onClick = onDismiss, modifier = Modifier.align(Alignment.Start)) {
-                    Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
+                // Top bar
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Close", tint = Color.White, modifier = Modifier.size(32.dp))
+                    }
+                    Text("Now Playing", style = MaterialTheme.typography.titleMedium, color = Color.White)
+                    IconButton(onClick = { /* More options */ }) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "Options", tint = Color.White)
+                    }
                 }
 
-                Spacer(modifier = Modifier.height(24.dp))
-                
                 // Album Art
+                Spacer(modifier = Modifier.height(16.dp))
                 if (song.artworkPath != null) {
                     AsyncImage(
                         model = song.artworkPath,
                         contentDescription = "Album Art",
                         modifier = Modifier
-                            .size(260.dp)
-                            .clip(RoundedCornerShape(12.dp)),
+                            .size(300.dp)
+                            .clip(RoundedCornerShape(16.dp)),
                         contentScale = ContentScale.Crop
                     )
                 } else {
                     Box(
-                        modifier = Modifier.size(260.dp).clip(RoundedCornerShape(12.dp)).background(Color.DarkGray),
+                        modifier = Modifier
+                            .size(300.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(Color.DarkGray),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(64.dp), tint = Color.LightGray)
+                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(80.dp), tint = Color.LightGray)
                     }
                 }
 
                 Spacer(modifier = Modifier.height(24.dp))
 
-                Text(song.title, color = Color.White, fontSize = 22.sp, maxLines = 1)
-                Text(song.artist, color = Color.Gray, fontSize = 16.sp, maxLines = 1)
-
-                Spacer(modifier = Modifier.height(24.dp))
-
-                // Progress Bar
-                val progressRatio = if (duration > 0) progress.toFloat() / duration else 0f
-                Slider(
-                    value = progressRatio,
-                    onValueChange = { playerManager.seekTo((it * duration).toLong()) },
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(formatTime(progress), color = Color.Gray, fontSize = 12.sp)
-                    Text(formatTime(duration), color = Color.Gray, fontSize = 12.sp)
+                // Song Title & Artist info
+                Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
+                    Text(song.title, color = Color.White, fontSize = 24.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, maxLines = 1)
+                    Text(song.artist, color = Color.Gray, fontSize = 16.sp, maxLines = 1)
                 }
 
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(16.dp))
 
-                // Custom Shuffle Weight Slider
-                if (song.id > 0) {
-                    Text("Shuffle Weight Multiplier: %.2f".format(Locale.US, weightInput), color = Color.White, fontSize = 14.sp)
+                // Progress Bar Slider
+                val progressRatio = if (duration > 0) progress.toFloat() / duration else 0f
+                Column(modifier = Modifier.fillMaxWidth()) {
                     Slider(
-                        value = weightInput,
-                        onValueChange = { 
-                            weightInput = it
-                            viewModel.updateSongWeight(song.id, it)
-                        },
-                        valueRange = 0.1f..5.0f,
+                        value = progressRatio,
+                        onValueChange = { playerManager.seekTo((it * duration).toLong()) },
+                        colors = SliderDefaults.colors(
+                            activeTrackColor = MaterialTheme.colorScheme.primary,
+                            thumbColor = MaterialTheme.colorScheme.primary
+                        ),
                         modifier = Modifier.fillMaxWidth()
                     )
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(formatTime(progress), color = Color.Gray, fontSize = 12.sp)
+                        Text(formatTime(duration), color = Color.Gray, fontSize = 12.sp)
+                    }
                 }
 
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(16.dp))
 
-                // Playback Controls
+                // Playback controls row (Shuffle, Prev, Play, Next, Repeat)
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(24.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    IconButton(onClick = { /* Previous song */ }) {
-                        Icon(Icons.Default.SkipPrevious, contentDescription = "Previous", tint = Color.White)
+                    IconButton(onClick = { viewModel.toggleShuffle() }) {
+                        Icon(
+                            imageVector = Icons.Default.Shuffle,
+                            contentDescription = "Shuffle",
+                            tint = if (useWeightedShuffle) MaterialTheme.colorScheme.primary else Color.Gray,
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
+
+                    IconButton(onClick = { viewModel.playPrevious() }) {
+                        Icon(Icons.Default.SkipPrevious, contentDescription = "Previous", tint = Color.White, modifier = Modifier.size(36.dp))
                     }
 
                     IconButton(
                         onClick = { if (isPlaying) playerManager.pause() else playerManager.resume() },
-                        modifier = Modifier.size(64.dp).background(MaterialTheme.colorScheme.primary, RoundedCornerShape(32.dp))
+                        modifier = Modifier
+                            .size(72.dp)
+                            .background(Color.White, RoundedCornerShape(36.dp))
                     ) {
                         Icon(
                             imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                             contentDescription = "Play/Pause",
-                            tint = Color.Black
+                            tint = Color.Black,
+                            modifier = Modifier.size(36.dp)
                         )
                     }
 
                     IconButton(onClick = { viewModel.playNext() }) {
-                        Icon(Icons.Default.SkipNext, contentDescription = "Next", tint = Color.White)
+                        Icon(Icons.Default.SkipNext, contentDescription = "Next", tint = Color.White, modifier = Modifier.size(36.dp))
+                    }
+
+                    IconButton(onClick = { viewModel.toggleLooping() }) {
+                        Icon(
+                            imageVector = Icons.Default.Repeat,
+                            contentDescription = "Loop",
+                            tint = if (isLooping) MaterialTheme.colorScheme.primary else Color.Gray,
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                // Bottom Tuning & Queue buttons
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = { showTuningSheet = true }) {
+                        Icon(Icons.Default.Tune, contentDescription = "Playback settings & weights", tint = Color.LightGray, modifier = Modifier.size(28.dp))
+                    }
+                    IconButton(onClick = { showQueueDialog = true }) {
+                        Icon(Icons.Default.QueueMusic, contentDescription = "Play Queue", tint = Color.LightGray, modifier = Modifier.size(28.dp))
                     }
                 }
             }
         }
+    }
+
+    if (showQueueDialog) {
+        QueueDialog(viewModel = viewModel, onDismiss = { showQueueDialog = false })
+    }
+
+    if (showTuningSheet) {
+        var weightInput by remember { mutableFloatStateOf(song.baseWeight) }
+        var formulaInput by remember { mutableStateOf(cooldownFormula) }
+        
+        AlertDialog(
+            onDismissRequest = { showTuningSheet = false },
+            title = { Text("Playback Customization") },
+            text = {
+                Column {
+                    Text("Dynamic Weight Settings", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    if (song.id > 0) {
+                        Text("Current Song Weight: %.2fx".format(Locale.US, weightInput), color = Color.White)
+                        Slider(
+                            value = weightInput,
+                            onValueChange = { 
+                                weightInput = it
+                                viewModel.updateSongWeight(song.id, it)
+                            },
+                            valueRange = 0.1f..5.0f,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                    }
+                    
+                    Text("Cooldown Decay Formula", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                    Text("Defines played tracks lockout size. Rounds up (Ceiling). E.g. n/3, 3*log(n), n-1", color = Color.Gray, fontSize = 12.sp)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    OutlinedTextField(
+                        value = formulaInput,
+                        onValueChange = { formulaInput = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        placeholder = { Text("e.g. n/3") }
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.updateCooldownFormula(formulaInput)
+                        showTuningSheet = false
+                    }
+                ) { Text("Save") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showTuningSheet = false }) { Text("Cancel") }
+            }
+        )
     }
 }
 
@@ -1756,6 +1878,70 @@ fun SearchDetailDialog(
                                         playlistExpanded = false
                                     }
                                 )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
+    val queue = viewModel.activeQueue
+    val activeIndex = viewModel.activeQueueIndex
+    
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            modifier = Modifier.fillMaxHeight(0.85f).fillMaxWidth(0.95f),
+            shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.surface
+        ) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Play Queue", style = MaterialTheme.typography.titleLarge, color = Color.White, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
+                    }
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+                
+                if (queue.isEmpty()) {
+                    Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        Text("Queue is empty", color = Color.Gray)
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        itemsIndexed(queue) { index, song ->
+                            val isActive = index == activeIndex
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (isActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else MaterialTheme.colorScheme.background
+                                ),
+                                border = if (isActive) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null
+                            ) {
+                                Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = "${index + 1}. ${song.title}",
+                                        color = if (isActive) MaterialTheme.colorScheme.primary else Color.White,
+                                        fontSize = 14.sp,
+                                        fontWeight = if (isActive) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal,
+                                        modifier = Modifier.weight(1f),
+                                        maxLines = 1
+                                    )
+                                    if (isActive) {
+                                        Text("Playing", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                                    }
+                                }
                             }
                         }
                     }

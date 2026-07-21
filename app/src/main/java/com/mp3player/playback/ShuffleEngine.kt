@@ -7,19 +7,51 @@ import kotlin.random.Random
 object ShuffleEngine {
 
     /**
+     * Evaluates a math-based cooldown formula where 'n' is the number of candidates.
+     * Rounds up using Ceiling.
+     */
+    fun evaluateCooldownFormula(formula: String, n: Int): Int {
+        if (n <= 1) return 0
+        val cleaned = formula.replace(" ", "").lowercase()
+        return try {
+            val result: Double = when {
+                cleaned.contains("n/2") -> n.toDouble() / 2.0
+                cleaned.contains("n/3") -> n.toDouble() / 3.0
+                cleaned.contains("n/4") -> n.toDouble() / 4.0
+                cleaned.contains("n/5") -> n.toDouble() / 5.0
+                cleaned.contains("n-1") -> (n - 1).toDouble()
+                cleaned.contains("log") -> {
+                    val logVal = Math.log(n.toDouble())
+                    if (cleaned.startsWith("3*")) 3.0 * logVal else logVal
+                }
+                cleaned.contains("n^2") -> (n * n).toDouble()
+                else -> {
+                    cleaned.toDoubleOrNull() ?: (n.toDouble() / 3.0)
+                }
+            }
+            Math.ceil(result).toInt()
+        } catch (e: Exception) {
+            Math.ceil(n.toDouble() / 3.0).toInt()
+        }
+    }
+
+    /**
      * Selects the next song from a list of candidates based on weighted probabilities.
-     * Includes cooldown buffer (excluding recently played songs) and automatic modifiers.
+     * Includes dynamic cooldown buffer (excluding recently played songs) and automatic modifiers.
      */
     fun selectNextSong(
         songs: List<SongEntity>,
         statsMap: Map<Int, SongStats>,
         history: List<Int>, // list of song IDs representing recently played history
-        cooldownSize: Int = 3,
+        cooldownFormula: String = "n/3",
         useSkipPenalty: Boolean = true,
         useKeeperBonus: Boolean = true
     ): SongEntity? {
         if (songs.isEmpty()) return null
         if (songs.size == 1) return songs[0]
+
+        // Calculate dynamic cooldown size using ceiling
+        val cooldownSize = evaluateCooldownFormula(cooldownFormula, songs.size)
 
         // 1. Filter out recently played songs based on cooldown buffer
         val effectiveCooldown = minOf(cooldownSize, songs.size - 1)
@@ -42,7 +74,6 @@ object ShuffleEngine {
                 // A. Skip Penalty: reduce weight based on skip rate
                 if (useSkipPenalty && stats.totalPlays > 2) {
                     val skipRate = stats.skipRate
-                    // If skip rate is > 50%, reduce the weight proportionally (down to a minimum of 10% of base weight)
                     if (skipRate > 0.5f) {
                         modifier *= maxOf(0.1f, 1.0f - (skipRate * 0.8f))
                     }
@@ -50,13 +81,11 @@ object ShuffleEngine {
 
                 // B. Keeper Bonus: boost weight of songs that are frequent landing points
                 if (useKeeperBonus && stats.keeperCount > 0) {
-                    // Small exponential boost based on keeper occurrences
                     modifier *= (1.0f + (stats.keeperCount * 0.15f))
                 }
             }
 
             val effectiveWeight = baseWeight * modifier
-            // Clamp effective weight between 0.05 and 15.0 to prevent division by zero or excessive domination
             maxOf(0.05f, minOf(15.0f, effectiveWeight))
         }
 
