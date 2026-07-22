@@ -1,0 +1,12 @@
+# Set default behavior to automatic text detection and force LF line endings
+* text=auto eol=lf
+
+# Explicitly treat binary files as binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.jar binary
+*.keystore binary
+*.so binary
