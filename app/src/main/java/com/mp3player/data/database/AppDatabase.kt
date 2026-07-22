@@ -14,9 +14,10 @@ import com.mp3player.data.entity.*
         PlaylistSongCrossRef::class,
         PlaybackEventEntity::class,
         ChainSkipEventEntity::class,
-        ChainSkipDetailEntity::class
+        ChainSkipDetailEntity::class,
+        IgnoredFileEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {

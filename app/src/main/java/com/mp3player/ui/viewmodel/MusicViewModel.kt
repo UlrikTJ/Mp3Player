@@ -11,6 +11,7 @@ import com.mp3player.data.dao.MusicDao
 import com.mp3player.data.dao.SongStats
 import com.mp3player.data.dao.KeeperLeaderboardEntry
 import com.mp3player.data.entity.SongEntity
+import com.mp3player.data.entity.IgnoredFileEntity
 import com.mp3player.data.network.*
 import com.mp3player.playback.ShuffleEngine
 import com.mp3player.playback.PlaybackStatsTracker
@@ -665,10 +666,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 val dataCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DATA)
                 
                 val existingPaths = allSongs.value.map { it.filePath }.toSet()
+                val ignoredPaths = musicDao.getAllIgnoredFilePaths().toSet()
                 
                 while (c.moveToNext()) {
                     val dataPath = c.getString(dataCol)
-                    if (existingPaths.contains(dataPath)) continue // skip already added songs
+                    if (existingPaths.contains(dataPath) || ignoredPaths.contains(dataPath)) continue // skip already added songs
                     
                     val title = c.getString(titleCol) ?: "Unknown Title"
                     val artist = c.getString(artistCol) ?: "Unknown Artist"
@@ -763,17 +765,44 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun deleteSong(song: SongEntity) {
+    fun deleteSongFromApp(song: SongEntity) {
+        viewModelScope.launch(Dispatchers.IO) {
+            musicDao.insertIgnoredFile(IgnoredFileEntity(filePath = song.filePath))
+            musicDao.deleteSong(song)
+        }
+    }
+
+    fun deleteSongFromDevice(song: SongEntity) {
         viewModelScope.launch(Dispatchers.IO) {
             musicDao.deleteSong(song)
             val file = File(song.filePath)
-            if (file.exists() && song.source == "YOUTUBE") {
+            if (file.exists()) {
                 try {
                     file.delete()
                 } catch (e: Exception) {
                     e.printStackTrace()
                 }
             }
+        }
+    }
+
+    fun restoreIgnoredFiles() {
+        viewModelScope.launch(Dispatchers.IO) {
+            musicDao.clearAllIgnoredFiles()
+        }
+    }
+
+    fun moveQueueItem(fromIndex: Int, toIndex: Int) {
+        if (fromIndex < 0 || fromIndex >= currentQueue.size || toIndex < 0 || toIndex >= currentQueue.size) return
+        val item = currentQueue.removeAt(fromIndex)
+        currentQueue.add(toIndex, item)
+        
+        if (currentQueueIndex == fromIndex) {
+            currentQueueIndex = toIndex
+        } else if (fromIndex < currentQueueIndex && toIndex >= currentQueueIndex) {
+            currentQueueIndex--
+        } else if (fromIndex > currentQueueIndex && toIndex <= currentQueueIndex) {
+            currentQueueIndex++
         }
     }
 

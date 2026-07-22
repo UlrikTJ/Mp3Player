@@ -89,3 +89,9 @@ data class ChainSkipDetailEntity(
     val skippedSongId: Int,
     val positionInChain: Int
 )
+
+@Entity(tableName = "ignored_files")
+data class IgnoredFileEntity(
+    @PrimaryKey val filePath: String,
+    val dateIgnored: Long = System.currentTimeMillis()
+)

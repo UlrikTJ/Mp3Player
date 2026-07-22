@@ -40,6 +40,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
@@ -425,7 +426,12 @@ fun LibraryScreen(viewModel: MusicViewModel) {
 
 @Composable
 fun SongRow(song: SongEntity, viewModel: MusicViewModel) {
-    var showDeleteConfirm by remember { mutableStateOf(false) }
+    var menuExpanded by remember { mutableStateOf(false) }
+    var showAppDeleteConfirm by remember { mutableStateOf(false) }
+    var showDeviceDeleteConfirm by remember { mutableStateOf(false) }
+    var showPlaylistPicker by remember { mutableStateOf(false) }
+    
+    val playlists by viewModel.allPlaylists.collectAsState()
 
     Card(
         modifier = Modifier
@@ -463,28 +469,105 @@ fun SongRow(song: SongEntity, viewModel: MusicViewModel) {
                 Text(song.artist, color = Color.Gray, fontSize = 14.sp, maxLines = 1)
             }
             
-            IconButton(onClick = { showDeleteConfirm = true }) {
-                Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.Red.copy(alpha = 0.8f))
+            Box {
+                IconButton(onClick = { menuExpanded = true }) {
+                    Icon(Icons.Default.MoreVert, contentDescription = "Options", tint = Color.LightGray)
+                }
+                DropdownMenu(
+                    expanded = menuExpanded,
+                    onDismissRequest = { menuExpanded = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Add to Playlist") },
+                        onClick = {
+                            menuExpanded = false
+                            showPlaylistPicker = true
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Delete from App (Ignore file)") },
+                        onClick = {
+                            menuExpanded = false
+                            showAppDeleteConfirm = true
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Delete from Device", color = Color(0xFFB71C1C)) },
+                        onClick = {
+                            menuExpanded = false
+                            showDeviceDeleteConfirm = true
+                        }
+                    )
+                }
             }
         }
     }
 
-    if (showDeleteConfirm) {
+    if (showAppDeleteConfirm) {
         AlertDialog(
-            onDismissRequest = { showDeleteConfirm = false },
-            title = { Text("Delete Song") },
-            text = { Text("Are you sure you want to permanently delete '${song.title}' from your library?") },
+            onDismissRequest = { showAppDeleteConfirm = false },
+            title = { Text("Remove from App") },
+            text = { Text("Remove '${song.title}' from the app library? The file will remain on your device, but future scans will skip it unless restored.") },
             confirmButton = {
                 Button(
                     onClick = {
-                        viewModel.deleteSong(song)
-                        showDeleteConfirm = false
+                        viewModel.deleteSongFromApp(song)
+                        showAppDeleteConfirm = false
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                ) { Text("Delete", color = Color.White) }
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB71C1C))
+                ) { Text("Remove", color = Color.White) }
             },
             dismissButton = {
-                TextButton(onClick = { showDeleteConfirm = false }) { Text("Cancel") }
+                TextButton(onClick = { showAppDeleteConfirm = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    if (showDeviceDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeviceDeleteConfirm = false },
+            title = { Text("Delete from Device") },
+            text = { Text("Permanently delete '${song.title}' from device storage? This action cannot be undone.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.deleteSongFromDevice(song)
+                        showDeviceDeleteConfirm = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB71C1C))
+                ) { Text("Delete Permanently", color = Color.White) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeviceDeleteConfirm = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    if (showPlaylistPicker) {
+        AlertDialog(
+            onDismissRequest = { showPlaylistPicker = false },
+            title = { Text("Add to Playlist") },
+            text = {
+                Column {
+                    if (playlists.isEmpty()) {
+                        Text("No playlists available", color = Color.Gray)
+                    } else {
+                        playlists.forEach { playlist ->
+                            TextButton(
+                                onClick = {
+                                    viewModel.addSongToPlaylist(playlist.id, song.id)
+                                    showPlaylistPicker = false
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(playlist.name, color = Color.White, modifier = Modifier.fillMaxWidth())
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showPlaylistPicker = false }) { Text("Close") }
             }
         )
     }
@@ -1924,14 +2007,17 @@ fun SearchDetailDialog(
 fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
     val queue = viewModel.activeQueue
     val activeIndex = viewModel.activeQueueIndex
+    var draggedIndex by remember { mutableStateOf<Int?>(null) }
     
-    Dialog(onDismissRequest = onDismiss) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
         Surface(
-            modifier = Modifier.fillMaxHeight(0.85f).fillMaxWidth(0.95f),
-            shape = RoundedCornerShape(24.dp),
-            color = MaterialTheme.colorScheme.surface
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.background
         ) {
-            Column(modifier = Modifier.padding(20.dp)) {
+            Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -1955,14 +2041,59 @@ fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
                     ) {
                         itemsIndexed(queue) { index, song ->
                             val isActive = index == activeIndex
+                            val isBeingDragged = draggedIndex == index
+                            var cumulativeY by remember { mutableStateOf(0f) }
+                            
                             Card(
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .scale(if (isBeingDragged) 1.03f else 1.0f),
+                                elevation = CardDefaults.cardElevation(
+                                    defaultElevation = if (isBeingDragged) 10.dp else 2.dp
+                                ),
                                 colors = CardDefaults.cardColors(
-                                    containerColor = if (isActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else MaterialTheme.colorScheme.background
+                                    containerColor = if (isBeingDragged) 
+                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.3f) 
+                                    else if (isActive) 
+                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) 
+                                    else 
+                                        MaterialTheme.colorScheme.surface
                                 ),
                                 border = if (isActive) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null
                             ) {
                                 Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Default.DragHandle,
+                                        contentDescription = "Reorder Queue",
+                                        tint = if (isBeingDragged) MaterialTheme.colorScheme.primary else Color.Gray,
+                                        modifier = Modifier
+                                            .size(36.dp)
+                                            .padding(4.dp)
+                                            .pointerInput(index) {
+                                                detectDragGestures(
+                                                    onDragStart = { 
+                                                        draggedIndex = index
+                                                        cumulativeY = 0f 
+                                                    },
+                                                    onDragEnd = { draggedIndex = null },
+                                                    onDragCancel = { draggedIndex = null },
+                                                    onDrag = { change, dragAmount ->
+                                                        change.consume()
+                                                        cumulativeY += dragAmount.y
+                                                        if (cumulativeY > 45f && index < queue.size - 1) {
+                                                            viewModel.moveQueueItem(index, index + 1)
+                                                            draggedIndex = index + 1
+                                                            cumulativeY = 0f
+                                                        } else if (cumulativeY < -45f && index > 0) {
+                                                            viewModel.moveQueueItem(index, index - 1)
+                                                            draggedIndex = index - 1
+                                                            cumulativeY = 0f
+                                                        }
+                                                    }
+                                                )
+                                            }
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
                                     Text(
                                         text = "${index + 1}. ${song.title}",
                                         color = if (isActive) MaterialTheme.colorScheme.primary else Color.White,

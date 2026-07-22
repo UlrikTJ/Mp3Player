@@ -154,6 +154,15 @@ abstract class MusicDao {
         ORDER BY count DESC
     """)
     abstract fun getPlaylistKeepersLeaderboardFlow(playlistId: Int): Flow<List<KeeperLeaderboardEntry>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    abstract suspend fun insertIgnoredFile(ignored: IgnoredFileEntity)
+
+    @Query("SELECT filePath FROM ignored_files")
+    abstract suspend fun getAllIgnoredFilePaths(): List<String>
+
+    @Query("DELETE FROM ignored_files")
+    abstract suspend fun clearAllIgnoredFiles()
 }
 
 data class SongStats(
