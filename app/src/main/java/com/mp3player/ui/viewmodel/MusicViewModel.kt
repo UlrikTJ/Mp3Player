@@ -67,6 +67,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val _cooldownFormula = MutableStateFlow(sharedPrefs.getString("cooldown_formula", "n/3") ?: "n/3")
     val cooldownFormula: StateFlow<String> = _cooldownFormula
 
+    private val _libraryViewMode = MutableStateFlow(sharedPrefs.getString("library_view_mode", "ALL") ?: "ALL")
+    val libraryViewMode: StateFlow<String> = _libraryViewMode
+
     // API Instance
     private var apiService: ApiService? = ApiService.getInstance("http://${_serverIp.value}:8000")
 
@@ -186,6 +189,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun updateLibraryViewMode(mode: String) {
+        _libraryViewMode.value = mode
+        sharedPrefs.edit().putString("library_view_mode", mode).apply()
+    }
+
     fun updateSongWeight(songId: Int, weight: Float) {
         viewModelScope.launch(Dispatchers.IO) {
             musicDao.updateSongWeight(songId, weight)
@@ -303,10 +311,20 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun playSongFromLibrary(song: SongEntity, playlistId: Int? = null) {
         playedSongIds.clear()
         currentQueue.clear()
-        currentQueue.addAll(allSongs.value)
-        currentQueueIndex = currentQueue.indexOfFirst { it.id == song.id }
-        
-        playCurrentQueueIndex(playlistId)
+        if (playlistId != null) {
+            viewModelScope.launch {
+                val playlistSongs = withContext(Dispatchers.IO) {
+                    musicDao.getSongsForPlaylist(playlistId)
+                }
+                currentQueue.addAll(playlistSongs)
+                currentQueueIndex = currentQueue.indexOfFirst { it.id == song.id }
+                playCurrentQueueIndex(playlistId)
+            }
+        } else {
+            currentQueue.addAll(allSongs.value)
+            currentQueueIndex = currentQueue.indexOfFirst { it.id == song.id }
+            playCurrentQueueIndex(playlistId)
+        }
     }
 
     fun addToQueue(song: SongEntity) {
@@ -778,7 +796,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 val body = response.body?.string()
                 if (body != null) {
-                    val rootElement = com.google.gson.JsonParser.parseString(body)
+                    val rootElement = JsonParser.parseString(body)
                     if (rootElement is com.google.gson.JsonArray && rootElement.size() > 1) {
                         val suggestionsArray = rootElement.get(1).asJsonArray
                         val suggestionsList = mutableListOf<String>()
