@@ -878,4 +878,18 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             musicDao.insertPlaylistSongCrossRef(PlaylistSongCrossRef(playlistId, song2.id, index + 1))
         }
     }
+
+    fun reorderSongInPlaylist(playlistId: Int, fromIndex: Int, toIndex: Int) {
+        if (fromIndex == toIndex) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val songs = musicDao.getSongsForPlaylist(playlistId).toMutableList()
+            if (fromIndex < 0 || fromIndex >= songs.size || toIndex < 0 || toIndex >= songs.size) return@launch
+            val item = songs.removeAt(fromIndex)
+            songs.add(toIndex, item)
+            
+            songs.forEachIndexed { posIndex, song ->
+                musicDao.insertPlaylistSongCrossRef(PlaylistSongCrossRef(playlistId, song.id, posIndex + 1))
+            }
+        }
+    }
 }

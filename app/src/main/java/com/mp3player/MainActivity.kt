@@ -16,6 +16,12 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.material.icons.filled.DragHandle
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.zIndex
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.Spring
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -51,6 +57,7 @@ import com.mp3player.data.entity.SongEntity
 import com.mp3player.playback.AudioService
 import com.mp3player.ui.viewmodel.MusicViewModel
 import java.util.Locale
+import kotlin.math.roundToInt
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
@@ -59,6 +66,7 @@ import androidx.core.content.ContextCompat
 import coil.compose.AsyncImage
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import java.io.File
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Folder
@@ -941,6 +949,12 @@ fun PlaylistDetailDialog(
     var songToRemove by remember { mutableStateOf<SongEntity?>(null) }
     var showWeightEditDialog by remember { mutableStateOf<SongEntity?>(null) }
     var isReorderMode by remember { mutableStateOf(false) }
+    
+    var draggedIndex by remember { mutableStateOf<Int?>(null) }
+    var dragOffsetY by remember { mutableFloatStateOf(0f) }
+    val playlistListState = rememberLazyListState()
+    val density = LocalDensity.current
+    val playlistItemHeightPx = with(density) { 68.dp.toPx() }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -1087,111 +1101,163 @@ fun PlaylistDetailDialog(
                         Text("This playlist is empty. Tap '+' to add songs!", color = Color.Gray)
                     }
                 } else {
+                    val currentDraggedIndex = draggedIndex
+                    val currentTargetIndex = if (currentDraggedIndex != null) {
+                        val slotsMoved = (dragOffsetY / playlistItemHeightPx).roundToInt()
+                        (currentDraggedIndex + slotsMoved).coerceIn(0, songs.size - 1)
+                    } else null
+
                     LazyColumn(
+                        state = playlistListState,
                         modifier = Modifier.weight(1f).padding(horizontal = 16.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        items(songs) { song ->
-                            val index = songs.indexOf(song)
-                            Row(
+                        itemsIndexed(songs) { index, song ->
+                            val isDraggedItem = index == currentDraggedIndex
+                            
+                            val targetTranslationY = when {
+                                isDraggedItem -> dragOffsetY
+                                currentDraggedIndex != null && currentTargetIndex != null -> {
+                                    if (currentDraggedIndex < currentTargetIndex && index > currentDraggedIndex && index <= currentTargetIndex) {
+                                        -playlistItemHeightPx
+                                    } else if (currentDraggedIndex > currentTargetIndex && index < currentDraggedIndex && index >= currentTargetIndex) {
+                                        playlistItemHeightPx
+                                    } else 0f
+                                }
+                                else -> 0f
+                            }
+                            
+                            val animatedY by animateFloatAsState(
+                                targetValue = targetTranslationY,
+                                animationSpec = if (isDraggedItem) spring(stiffness = Spring.StiffnessHigh) else spring(stiffness = Spring.StiffnessMediumLow),
+                                label = "playlistReorderTranslation"
+                            )
+
+                            Card(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clickable { viewModel.playSongFromLibrary(song, playlist.id) }
-                                    .padding(vertical = 8.dp, horizontal = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                                    .zIndex(if (isDraggedItem) 10f else 1f)
+                                    .graphicsLayer {
+                                        translationY = if (isDraggedItem) dragOffsetY else animatedY
+                                        scaleX = if (isDraggedItem) 1.05f else 1.0f
+                                        scaleY = if (isDraggedItem) 1.05f else 1.0f
+                                    },
+                                elevation = CardDefaults.cardElevation(
+                                    defaultElevation = if (isDraggedItem) 12.dp else 0.dp
+                                ),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (isDraggedItem) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else MaterialTheme.colorScheme.surface
+                                ),
+                                border = if (isDraggedItem) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null
                             ) {
-                                if (isReorderMode) {
-                                    var cumulativeY by remember { mutableStateOf(0f) }
-                                    Icon(
-                                        imageVector = Icons.Default.DragHandle,
-                                        contentDescription = "Drag to reorder",
-                                        tint = Color.Gray,
-                                        modifier = Modifier
-                                            .size(36.dp)
-                                            .padding(4.dp)
-                                            .pointerInput(index) {
-                                                detectDragGestures(
-                                                    onDragStart = { cumulativeY = 0f },
-                                                    onDrag = { change, dragAmount ->
-                                                        change.consume()
-                                                        cumulativeY += dragAmount.y
-                                                        if (cumulativeY > 50f && index < songs.size - 1) {
-                                                            viewModel.moveSongInPlaylist(playlist.id, song.id, moveUp = false)
-                                                            cumulativeY = 0f
-                                                        } else if (cumulativeY < -50f && index > 0) {
-                                                            viewModel.moveSongInPlaylist(playlist.id, song.id, moveUp = true)
-                                                            cumulativeY = 0f
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { viewModel.playSongFromLibrary(song, playlist.id) }
+                                        .padding(vertical = 8.dp, horizontal = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    if (isReorderMode) {
+                                        Icon(
+                                            imageVector = Icons.Default.DragHandle,
+                                            contentDescription = "Drag to reorder",
+                                            tint = if (isDraggedItem) MaterialTheme.colorScheme.primary else Color.Gray,
+                                            modifier = Modifier
+                                                .size(36.dp)
+                                                .padding(4.dp)
+                                                .pointerInput(index) {
+                                                    detectDragGestures(
+                                                        onDragStart = { 
+                                                            draggedIndex = index
+                                                            dragOffsetY = 0f 
+                                                        },
+                                                        onDragEnd = {
+                                                            val from = draggedIndex
+                                                            val to = currentTargetIndex
+                                                            if (from != null && to != null && from != to) {
+                                                                viewModel.reorderSongInPlaylist(playlist.id, from, to)
+                                                            }
+                                                            draggedIndex = null
+                                                            dragOffsetY = 0f
+                                                        },
+                                                        onDragCancel = { 
+                                                            draggedIndex = null
+                                                            dragOffsetY = 0f
+                                                        },
+                                                        onDrag = { change, dragAmount ->
+                                                            change.consume()
+                                                            dragOffsetY += dragAmount.y
                                                         }
-                                                    }
-                                                )
-                                            }
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                }
-                                
-                                if (song.artworkPath != null) {
-                                    AsyncImage(
-                                        model = song.artworkPath,
-                                        contentDescription = "Album Art",
-                                        modifier = Modifier
-                                            .size(52.dp)
-                                            .clip(RoundedCornerShape(8.dp)),
-                                        contentScale = ContentScale.Crop
-                                    )
-                                } else {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(52.dp)
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .background(Color.DarkGray),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.LightGray)
+                                                    )
+                                                }
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
                                     }
-                                }
-                                Spacer(modifier = Modifier.width(16.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        song.title, 
-                                        color = Color.White, 
-                                        fontSize = 15.sp, 
-                                        maxLines = 1,
-                                        fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
-                                    )
-                                    Text(song.artist, color = Color.Gray, fontSize = 13.sp, maxLines = 1)
-                                }
-                                
-                                // Options three dots button
-                                var menuExpanded by remember { mutableStateOf(false) }
-                                Box {
-                                    IconButton(onClick = { menuExpanded = true }) {
-                                        Icon(Icons.Default.MoreVert, contentDescription = "Options", tint = Color.LightGray)
+                                    
+                                    if (song.artworkPath != null) {
+                                        AsyncImage(
+                                            model = song.artworkPath,
+                                            contentDescription = "Album Art",
+                                            modifier = Modifier
+                                                .size(52.dp)
+                                                .clip(RoundedCornerShape(8.dp)),
+                                            contentScale = ContentScale.Crop
+                                        )
+                                    } else {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(52.dp)
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(Color.DarkGray),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.LightGray)
+                                        }
                                     }
-                                    DropdownMenu(
-                                        expanded = menuExpanded,
-                                        onDismissRequest = { menuExpanded = false }
-                                    ) {
-                                        DropdownMenuItem(
-                                            text = { Text("Add to Queue") },
-                                            onClick = {
-                                                viewModel.addToQueue(song)
-                                                menuExpanded = false
-                                            }
+                                    Spacer(modifier = Modifier.width(16.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            song.title, 
+                                            color = Color.White, 
+                                            fontSize = 15.sp, 
+                                            maxLines = 1,
+                                            fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
                                         )
-                                        DropdownMenuItem(
-                                            text = { Text("Change Weight") },
-                                            onClick = {
-                                                showWeightEditDialog = song
-                                                menuExpanded = false
-                                            }
-                                        )
-                                        DropdownMenuItem(
-                                            text = { Text("Remove from Playlist") },
-                                            onClick = {
-                                                songToRemove = song
-                                                menuExpanded = false
-                                            }
-                                        )
+                                        Text(song.artist, color = Color.Gray, fontSize = 13.sp, maxLines = 1)
+                                    }
+                                    
+                                    // Options three dots button
+                                    var menuExpanded by remember { mutableStateOf(false) }
+                                    Box {
+                                        IconButton(onClick = { menuExpanded = true }) {
+                                            Icon(Icons.Default.MoreVert, contentDescription = "Options", tint = Color.LightGray)
+                                        }
+                                        DropdownMenu(
+                                            expanded = menuExpanded,
+                                            onDismissRequest = { menuExpanded = false }
+                                        ) {
+                                            DropdownMenuItem(
+                                                text = { Text("Add to Queue") },
+                                                onClick = {
+                                                    viewModel.addToQueue(song)
+                                                    menuExpanded = false
+                                                }
+                                            )
+                                            DropdownMenuItem(
+                                                text = { Text("Change Weight") },
+                                                onClick = {
+                                                    showWeightEditDialog = song
+                                                    menuExpanded = false
+                                                }
+                                            )
+                                            DropdownMenuItem(
+                                                text = { Text("Remove from Playlist") },
+                                                onClick = {
+                                                    songToRemove = song
+                                                    menuExpanded = false
+                                                }
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -2007,8 +2073,13 @@ fun SearchDetailDialog(
 fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
     val queue = viewModel.activeQueue
     val activeIndex = viewModel.activeQueueIndex
-    var draggedIndex by remember { mutableStateOf<Int?>(null) }
+    val listState = rememberLazyListState()
     
+    var draggedIndex by remember { mutableStateOf<Int?>(null) }
+    var dragOffsetY by remember { mutableFloatStateOf(0f) }
+    val density = LocalDensity.current
+    val itemHeightPx = with(density) { 64.dp.toPx() }
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -2035,37 +2106,66 @@ fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
                         Text("Queue is empty", color = Color.Gray)
                     }
                 } else {
+                    val currentDraggedIndex = draggedIndex
+                    val currentTargetIndex = if (currentDraggedIndex != null) {
+                        val slotsMoved = (dragOffsetY / itemHeightPx).roundToInt()
+                        (currentDraggedIndex + slotsMoved).coerceIn(0, queue.size - 1)
+                    } else null
+
                     LazyColumn(
+                        state = listState,
                         modifier = Modifier.weight(1f),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         itemsIndexed(queue) { index, song ->
                             val isActive = index == activeIndex
-                            val isBeingDragged = draggedIndex == index
-                            var cumulativeY by remember { mutableStateOf(0f) }
+                            val isDraggedItem = index == currentDraggedIndex
                             
+                            val targetTranslationY = when {
+                                isDraggedItem -> dragOffsetY
+                                currentDraggedIndex != null && currentTargetIndex != null -> {
+                                    if (currentDraggedIndex < currentTargetIndex && index > currentDraggedIndex && index <= currentTargetIndex) {
+                                        -itemHeightPx
+                                    } else if (currentDraggedIndex > currentTargetIndex && index < currentDraggedIndex && index >= currentTargetIndex) {
+                                        itemHeightPx
+                                    } else 0f
+                                }
+                                else -> 0f
+                            }
+                            
+                            val animatedY by animateFloatAsState(
+                                targetValue = targetTranslationY,
+                                animationSpec = if (isDraggedItem) spring(stiffness = Spring.StiffnessHigh) else spring(stiffness = Spring.StiffnessMediumLow),
+                                label = "reorderTranslation"
+                            )
+
                             Card(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .scale(if (isBeingDragged) 1.03f else 1.0f),
+                                    .zIndex(if (isDraggedItem) 10f else 1f)
+                                    .graphicsLayer {
+                                        translationY = if (isDraggedItem) dragOffsetY else animatedY
+                                        scaleX = if (isDraggedItem) 1.05f else 1.0f
+                                        scaleY = if (isDraggedItem) 1.05f else 1.0f
+                                    },
                                 elevation = CardDefaults.cardElevation(
-                                    defaultElevation = if (isBeingDragged) 10.dp else 2.dp
+                                    defaultElevation = if (isDraggedItem) 12.dp else 2.dp
                                 ),
                                 colors = CardDefaults.cardColors(
-                                    containerColor = if (isBeingDragged) 
-                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.3f) 
+                                    containerColor = if (isDraggedItem) 
+                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) 
                                     else if (isActive) 
                                         MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) 
                                     else 
                                         MaterialTheme.colorScheme.surface
                                 ),
-                                border = if (isActive) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null
+                                border = if (isDraggedItem || isActive) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null
                             ) {
                                 Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                                     Icon(
                                         imageVector = Icons.Default.DragHandle,
                                         contentDescription = "Reorder Queue",
-                                        tint = if (isBeingDragged) MaterialTheme.colorScheme.primary else Color.Gray,
+                                        tint = if (isDraggedItem) MaterialTheme.colorScheme.primary else Color.Gray,
                                         modifier = Modifier
                                             .size(36.dp)
                                             .padding(4.dp)
@@ -2073,22 +2173,24 @@ fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
                                                 detectDragGestures(
                                                     onDragStart = { 
                                                         draggedIndex = index
-                                                        cumulativeY = 0f 
+                                                        dragOffsetY = 0f 
                                                     },
-                                                    onDragEnd = { draggedIndex = null },
-                                                    onDragCancel = { draggedIndex = null },
+                                                    onDragEnd = {
+                                                        val from = draggedIndex
+                                                        val to = currentTargetIndex
+                                                        if (from != null && to != null && from != to) {
+                                                            viewModel.moveQueueItem(from, to)
+                                                        }
+                                                        draggedIndex = null
+                                                        dragOffsetY = 0f
+                                                    },
+                                                    onDragCancel = { 
+                                                        draggedIndex = null
+                                                        dragOffsetY = 0f
+                                                    },
                                                     onDrag = { change, dragAmount ->
                                                         change.consume()
-                                                        cumulativeY += dragAmount.y
-                                                        if (cumulativeY > 45f && index < queue.size - 1) {
-                                                            viewModel.moveQueueItem(index, index + 1)
-                                                            draggedIndex = index + 1
-                                                            cumulativeY = 0f
-                                                        } else if (cumulativeY < -45f && index > 0) {
-                                                            viewModel.moveQueueItem(index, index - 1)
-                                                            draggedIndex = index - 1
-                                                            cumulativeY = 0f
-                                                        }
+                                                        dragOffsetY += dragAmount.y
                                                     }
                                                 )
                                             }
@@ -2096,9 +2198,9 @@ fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
                                         text = "${index + 1}. ${song.title}",
-                                        color = if (isActive) MaterialTheme.colorScheme.primary else Color.White,
+                                        color = if (isActive || isDraggedItem) MaterialTheme.colorScheme.primary else Color.White,
                                         fontSize = 14.sp,
-                                        fontWeight = if (isActive) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal,
+                                        fontWeight = if (isActive || isDraggedItem) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal,
                                         modifier = Modifier.weight(1f),
                                         maxLines = 1
                                     )
