@@ -30,6 +30,9 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import com.google.gson.JsonParser
 import com.google.gson.JsonArray
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 
 
 
@@ -122,12 +125,16 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val downloadProgress: StateFlow<Map<String, Float>> = _downloadProgress
 
     // History and Queue
-    private val playbackHistory = mutableListOf<Int>() // List of song IDs
-    private val currentQueue = mutableListOf<SongEntity>()
-    private var currentQueueIndex = -1
-    private val playedSongIds = mutableListOf<Int>()
+    private val _playbackHistory = MutableStateFlow<List<Int>>(emptyList())
+    val playbackHistoryFlow: StateFlow<List<Int>> = _playbackHistory
 
-    val activeQueue: List<SongEntity> get() = currentQueue
+    private val _currentQueue = MutableStateFlow<List<SongEntity>>(emptyList())
+    val currentQueueFlow: StateFlow<List<SongEntity>> = _currentQueue
+
+    private var currentQueueIndex = -1
+    private val _playedSongIds = MutableStateFlow<Set<Int>>(emptySet())
+
+    val activeQueue: List<SongEntity> get() = _currentQueue.value
     val activeQueueIndex: Int get() = currentQueueIndex
 
     init {
@@ -180,7 +187,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         val newValue = !_useWeightedShuffle.value
         _useWeightedShuffle.value = newValue
         sharedPrefs.edit().putBoolean("weighted_shuffle", newValue).apply()
-        playedSongIds.clear()
+        _playedSongIds.value = emptySet()
     }
 
     fun updateCooldownFormula(formula: String) {
@@ -310,37 +317,39 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     // --- Core Playback flow ---
     fun playSongFromLibrary(song: SongEntity, playlistId: Int? = null) {
-        playedSongIds.clear()
-        currentQueue.clear()
+        _playedSongIds.value = emptySet()
         if (playlistId != null) {
             viewModelScope.launch {
                 val playlistSongs = withContext(Dispatchers.IO) {
                     musicDao.getSongsForPlaylist(playlistId)
                 }
-                currentQueue.addAll(playlistSongs)
-                currentQueueIndex = currentQueue.indexOfFirst { it.id == song.id }
+                _currentQueue.value = playlistSongs
+                currentQueueIndex = playlistSongs.indexOfFirst { it.id == song.id }
                 playCurrentQueueIndex(playlistId)
             }
         } else {
-            currentQueue.addAll(allSongs.value)
-            currentQueueIndex = currentQueue.indexOfFirst { it.id == song.id }
+            val all = allSongs.value
+            _currentQueue.value = all
+            currentQueueIndex = all.indexOfFirst { it.id == song.id }
             playCurrentQueueIndex(playlistId)
         }
     }
 
     fun addToQueue(song: SongEntity) {
-        currentQueue.add(song)
+        _currentQueue.update { it + song }
     }
 
     private fun playCurrentQueueIndex(playlistId: Int?) {
-        if (currentQueueIndex < 0 || currentQueueIndex >= currentQueue.size) return
-        val song = currentQueue[currentQueueIndex]
+        val queue = _currentQueue.value
+        if (currentQueueIndex < 0 || currentQueueIndex >= queue.size) return
+        val song = queue[currentQueueIndex]
         
-        statsTracker.onTrackEnded(completed = false)
+        // statsTracker.onTrackEnded should have been called by the caller of this method
+        // to avoid redundant calls when advancing naturally.
         statsTracker.onTrackStarted(song, playlistId)
         
         if (song.id > 0) {
-            playbackHistory.add(song.id)
+            _playbackHistory.update { it + song.id }
         }
 
         val nextSong = getNextSongForQueue()
@@ -353,28 +362,30 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun getNextSongForQueue(): SongEntity? {
-        if (currentQueue.isEmpty()) return null
+        val queue = _currentQueue.value
+        if (queue.isEmpty()) return null
         
         if (_useWeightedShuffle.value) {
             val statsMap = songStats.value.associateBy { it.songId }
+            val history = _playbackHistory.value
             if (_isLooping.value) {
                 return ShuffleEngine.selectNextSong(
-                    songs = currentQueue,
+                    songs = queue,
                     statsMap = statsMap,
-                    history = playbackHistory,
+                    history = history,
                     cooldownFormula = _cooldownFormula.value,
                     useSkipPenalty = _useSkipPenalty.value,
                     useKeeperBonus = _useKeeperBonus.value
                 )
             } else {
-                val currentSong = currentQueue.getOrNull(currentQueueIndex)
-                val tempPlayed = if (currentSong != null) playedSongIds + currentSong.id else playedSongIds
-                val pool = currentQueue.filter { it.id !in tempPlayed }
+                val currentSong = queue.getOrNull(currentQueueIndex)
+                val tempPlayed = if (currentSong != null) _playedSongIds.value + currentSong.id else _playedSongIds.value
+                val pool = queue.filter { it.id !in tempPlayed }
                 if (pool.isEmpty()) return null
                 return ShuffleEngine.selectNextSong(
                     songs = pool,
                     statsMap = statsMap,
-                    history = playbackHistory,
+                    history = history,
                     cooldownFormula = _cooldownFormula.value,
                     useSkipPenalty = _useSkipPenalty.value,
                     useKeeperBonus = _useKeeperBonus.value
@@ -382,10 +393,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             }
         } else {
             val nextIndex = currentQueueIndex + 1
-            return if (nextIndex < currentQueue.size) {
-                currentQueue[nextIndex]
+            return if (nextIndex < queue.size) {
+                queue[nextIndex]
             } else if (_isLooping.value) {
-                currentQueue.firstOrNull()
+                queue.firstOrNull()
             } else {
                 null
             }
@@ -393,52 +404,53 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun selectNextTrack(completed: Boolean) {
-        if (currentQueue.isEmpty()) return
+        val queue = _currentQueue.value
+        if (queue.isEmpty()) return
 
-        val currentSong = currentQueue.getOrNull(currentQueueIndex)
+        val currentSong = queue.getOrNull(currentQueueIndex)
         if (currentSong != null && completed) {
-            playedSongIds.add(currentSong.id)
+            _playedSongIds.update { it + currentSong.id }
         }
 
         if (_useWeightedShuffle.value) {
+            val history = _playbackHistory.value
+            val statsMap = songStats.value.associateBy { it.songId }
             if (_isLooping.value) {
-                val statsMap = songStats.value.associateBy { it.songId }
                 val nextSong = ShuffleEngine.selectNextSong(
-                    songs = currentQueue,
+                    songs = queue,
                     statsMap = statsMap,
-                    history = playbackHistory,
+                    history = history,
                     cooldownFormula = _cooldownFormula.value,
                     useSkipPenalty = _useSkipPenalty.value,
                     useKeeperBonus = _useKeeperBonus.value
                 )
                 if (nextSong != null) {
-                    currentQueueIndex = currentQueue.indexOfFirst { it.id == nextSong.id }
+                    currentQueueIndex = queue.indexOfFirst { it.id == nextSong.id }
                     playCurrentQueueIndex(selectedPlaylistId.value)
                 }
             } else {
-                val pool = currentQueue.filter { it.id !in playedSongIds }
+                val pool = queue.filter { it.id !in _playedSongIds.value }
                 if (pool.isNotEmpty()) {
-                    val statsMap = songStats.value.associateBy { it.songId }
                     val nextSong = ShuffleEngine.selectNextSong(
                         songs = pool,
                         statsMap = statsMap,
-                        history = playbackHistory,
+                        history = history,
                         cooldownFormula = _cooldownFormula.value,
                         useSkipPenalty = _useSkipPenalty.value,
                         useKeeperBonus = _useKeeperBonus.value
                     )
                     if (nextSong != null) {
-                        currentQueueIndex = currentQueue.indexOfFirst { it.id == nextSong.id }
+                        currentQueueIndex = queue.indexOfFirst { it.id == nextSong.id }
                         playCurrentQueueIndex(selectedPlaylistId.value)
                     }
                 } else {
                     _playerManager.value?.pause()
-                    playedSongIds.clear()
+                    _playedSongIds.value = emptySet()
                 }
             }
         } else {
             val nextIndex = currentQueueIndex + 1
-            if (nextIndex < currentQueue.size) {
+            if (nextIndex < queue.size) {
                 currentQueueIndex = nextIndex
                 playCurrentQueueIndex(selectedPlaylistId.value)
             } else {
@@ -453,20 +465,23 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun playNext() {
+        statsTracker.onTrackEnded(completed = false)
         selectNextTrack(completed = false)
     }
 
     fun playPrevious() {
-        if (currentQueue.isNotEmpty()) {
+        val queue = _currentQueue.value
+        if (queue.isNotEmpty()) {
+            statsTracker.onTrackEnded(completed = false)
             val prevIndex = currentQueueIndex - 1
-            currentQueueIndex = if (prevIndex < 0) currentQueue.size - 1 else prevIndex
+            currentQueueIndex = if (prevIndex < 0) queue.size - 1 else prevIndex
             playCurrentQueueIndex(selectedPlaylistId.value)
         }
     }
 
     private fun playSongDirectly(song: SongEntity) {
-        playedSongIds.clear()
-        statsTracker.onTrackEnded(completed = false)
+        _playedSongIds.value = emptySet()
+        // statsTracker.onTrackEnded(completed = false) // Removed redundant call
         statsTracker.onTrackStarted(song, null)
         _playerManager.value?.play(song, null)
     }
@@ -568,9 +583,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 musicDao.getSongsForPlaylist(playlistId)
             }
             if (songs.isNotEmpty()) {
-                playedSongIds.clear()
-                currentQueue.clear()
-                currentQueue.addAll(songs)
+                _playedSongIds.value = emptySet()
+                _currentQueue.value = songs
                 
                 if (shuffle) {
                     _useWeightedShuffle.value = true
@@ -580,7 +594,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     val nextSong = ShuffleEngine.selectNextSong(
                         songs = songs,
                         statsMap = statsMap,
-                        history = playbackHistory,
+                        history = _playbackHistory.value,
                         cooldownFormula = _cooldownFormula.value,
                         useSkipPenalty = _useSkipPenalty.value,
                         useKeeperBonus = _useKeeperBonus.value
@@ -639,9 +653,46 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    var showRestorePrompt by mutableStateOf(false)
+        private set
+    var pendingIgnoredCount by mutableStateOf(0)
+        private set
+
     fun scanLocalStorage() {
+        val context = getApplication<Application>().applicationContext
+        checkScanStorage(context)
+    }
+
+    fun checkScanStorage(context: Context) {
         viewModelScope.launch(Dispatchers.IO) {
-            val context = getApplication<Application>().applicationContext
+            val ignoredFiles = musicDao.getAllIgnoredFilePaths()
+            if (ignoredFiles.isNotEmpty()) {
+                pendingIgnoredCount = ignoredFiles.size
+                withContext(Dispatchers.Main) {
+                    showRestorePrompt = true
+                }
+            } else {
+                scanStorage(context)
+            }
+        }
+    }
+
+    fun dismissRestorePrompt() {
+        showRestorePrompt = false
+    }
+
+    fun confirmScanStorage(context: Context, restoreIgnored: Boolean) {
+        showRestorePrompt = false
+        viewModelScope.launch(Dispatchers.IO) {
+            if (restoreIgnored) {
+                musicDao.clearAllIgnoredFiles()
+            }
+            scanStorage(context)
+        }
+    }
+
+    fun scanStorage(context: Context) {
+        viewModelScope.launch(Dispatchers.IO) {
             val contentResolver = context.contentResolver
             val uri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
             val projection = arrayOf(
@@ -653,10 +704,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 MediaStore.Audio.Media.DATA
             )
             
-            // Only fetch real music files (exclude notification sounds, podcasts, etc.)
             val selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0"
-            
             val cursor = contentResolver.query(uri, projection, selection, null, null)
+            
+            val existingPaths = allSongs.value.map { it.filePath }.toMutableSet()
+            val ignoredPaths = musicDao.getAllIgnoredFilePaths().toSet()
             
             cursor?.use { c ->
                 val titleCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
@@ -665,12 +717,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 val durationCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
                 val dataCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DATA)
                 
-                val existingPaths = allSongs.value.map { it.filePath }.toSet()
-                val ignoredPaths = musicDao.getAllIgnoredFilePaths().toSet()
-                
                 while (c.moveToNext()) {
                     val dataPath = c.getString(dataCol)
-                    if (existingPaths.contains(dataPath) || ignoredPaths.contains(dataPath)) continue // skip already added songs
+                    if (existingPaths.contains(dataPath) || ignoredPaths.contains(dataPath)) continue
                     
                     val title = c.getString(titleCol) ?: "Unknown Title"
                     val artist = c.getString(artistCol) ?: "Unknown Artist"
@@ -688,10 +737,42 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                         youtubeVideoId = null
                     )
                     musicDao.insertSong(song)
+                    existingPaths.add(dataPath)
                 }
             }
             
-            // Auto trigger artwork fetcher for local songs
+            // Also scan app music folder & public music folder for downloaded tracks
+            val appMusicDir = context.getExternalFilesDir(Environment.DIRECTORY_MUSIC)
+            val publicMusicDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC)
+            val dirsToScan = listOfNotNull(appMusicDir, publicMusicDir)
+            
+            for (dir in dirsToScan) {
+                if (dir.exists()) {
+                    dir.walkTopDown().filter { it.isFile && (it.extension.equals("mp3", ignoreCase = true) || it.extension.equals("m4a", ignoreCase = true) || it.extension.equals("flac", ignoreCase = true)) }.forEach { file ->
+                        val path = file.absolutePath
+                        if (!existingPaths.contains(path) && !ignoredPaths.contains(path)) {
+                            val rawName = file.nameWithoutExtension.replace("_", " ")
+                            val parts = rawName.split(" - ")
+                            val title = if (parts.size > 1) parts[1].trim() else rawName
+                            val artist = if (parts.size > 1) parts[0].trim() else "Downloaded Track"
+                            
+                            val song = SongEntity(
+                                title = title,
+                                artist = artist,
+                                album = "YouTube Downloads",
+                                filePath = path,
+                                artworkPath = null,
+                                durationMs = 240000L,
+                                source = "LOCAL",
+                                youtubeVideoId = null
+                            )
+                            musicDao.insertSong(song)
+                            existingPaths.add(path)
+                        }
+                    }
+                }
+            }
+            
             triggerAutoArtworkFetcher()
         }
     }
@@ -702,14 +783,25 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun triggerAutoArtworkFetcher() {
         viewModelScope.launch(Dispatchers.IO) {
             if (_isFetchingArtwork.value) return@launch
-            val service = apiService ?: return@launch
+            var service = apiService
+            if (service == null) {
+                val ip = sharedPrefs.getString("server_ip", "100.73.254.38") ?: "100.73.254.38"
+                updateServerIp(ip)
+                service = apiService
+            }
+            if (service == null) return@launch
             _isFetchingArtwork.value = true
             
             try {
-                val songsToFetch = allSongs.value.filter { it.source == "LOCAL" && it.artworkPath.isNullOrBlank() }
+                val songsToFetch = allSongs.value.filter { it.artworkPath.isNullOrBlank() }
                 for (song in songsToFetch) {
                     try {
-                        val query = "${song.title} ${song.artist}".trim()
+                        val cleanTitle = song.title.replace(Regex("(?i)\\.(mp3|flac|wav|m4a)$"), "")
+                            .replace(Regex("^[0-9]+\\s*[-._]?\\s*"), "").trim()
+                        val cleanArtist = if (song.artist != "Unknown Artist" && song.artist != "Downloaded Track") song.artist else ""
+                        val query = "$cleanTitle $cleanArtist".trim()
+                        if (query.length < 2) continue
+                        
                         val results = service.search(query)
                         if (results.isNotEmpty()) {
                             val bestMatch = results.first()
@@ -718,8 +810,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                                 musicDao.updateSong(updatedSong)
                             }
                         }
-                        // Sleep to limit YouTube API hits
-                        Thread.sleep(1000)
+                        Thread.sleep(800)
                     } catch (e: Exception) {
                         e.printStackTrace()
                     }
@@ -766,6 +857,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun deleteSongFromApp(song: SongEntity) {
+        removeSongFromQueue(song.id)
         viewModelScope.launch(Dispatchers.IO) {
             musicDao.insertIgnoredFile(IgnoredFileEntity(filePath = song.filePath))
             musicDao.deleteSong(song)
@@ -773,6 +865,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun deleteSongFromDevice(song: SongEntity) {
+        removeSongFromQueue(song.id)
         viewModelScope.launch(Dispatchers.IO) {
             musicDao.deleteSong(song)
             val file = File(song.filePath)
@@ -786,6 +879,32 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun removeSongFromQueue(songId: Int) {
+        val currentQueue = _currentQueue.value
+        val indexToRemove = currentQueue.indexOfFirst { it.id == songId }
+        if (indexToRemove != -1) {
+            val updatedQueue = currentQueue.toMutableList()
+            updatedQueue.removeAt(indexToRemove)
+            _currentQueue.value = updatedQueue
+            
+            // Adjust index if needed
+            if (indexToRemove < currentQueueIndex) {
+                currentQueueIndex--
+            } else if (indexToRemove == currentQueueIndex) {
+                // The playing song was deleted! 
+                // Tell the stats tracker it's gone to prevent crashes later
+                statsTracker.onTrackEnded(completed = false)
+
+                if (currentQueueIndex >= updatedQueue.size) {
+                    currentQueueIndex = if (updatedQueue.isEmpty()) -1 else 0
+                }
+            }
+            
+            // Sync with music engine to ensure it doesn't try to crossfade into the deleted song
+            _playerManager.value?.setNextSong(getNextSongForQueue())
+        }
+    }
+
     fun restoreIgnoredFiles() {
         viewModelScope.launch(Dispatchers.IO) {
             musicDao.clearAllIgnoredFiles()
@@ -793,9 +912,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun moveQueueItem(fromIndex: Int, toIndex: Int) {
-        if (fromIndex < 0 || fromIndex >= currentQueue.size || toIndex < 0 || toIndex >= currentQueue.size) return
-        val item = currentQueue.removeAt(fromIndex)
-        currentQueue.add(toIndex, item)
+        val queue = _currentQueue.value.toMutableList()
+        if (fromIndex < 0 || fromIndex >= queue.size || toIndex < 0 || toIndex >= queue.size) return
+        val item = queue.removeAt(fromIndex)
+        queue.add(toIndex, item)
+        
+        _currentQueue.value = queue
         
         if (currentQueueIndex == fromIndex) {
             currentQueueIndex = toIndex
@@ -804,6 +926,21 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         } else if (fromIndex > currentQueueIndex && toIndex <= currentQueueIndex) {
             currentQueueIndex++
         }
+        
+        // Ensure playback engine is synced if next track changed
+        _playerManager.value?.setNextSong(getNextSongForQueue())
+    }
+
+    fun playQueueSongAt(index: Int) {
+        val queue = _currentQueue.value.toMutableList()
+        if (index < 0 || index >= queue.size) return
+        val song = queue.removeAt(index)
+        queue.add(0, song)
+        _currentQueue.value = queue
+        currentQueueIndex = 0
+        
+        statsTracker.onTrackEnded(completed = false)
+        playCurrentQueueIndex(selectedPlaylistId.value)
     }
 
     private val _suggestions = MutableStateFlow<List<String>>(emptyList())
@@ -887,9 +1024,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             val item = songs.removeAt(fromIndex)
             songs.add(toIndex, item)
             
-            songs.forEachIndexed { posIndex, song ->
-                musicDao.insertPlaylistSongCrossRef(PlaylistSongCrossRef(playlistId, song.id, posIndex + 1))
+            val crossRefs = songs.mapIndexed { posIndex, song ->
+                PlaylistSongCrossRef(playlistId = playlistId, songId = song.id, position = posIndex + 1)
             }
+            musicDao.updatePlaylistOrder(playlistId, crossRefs)
         }
     }
 }

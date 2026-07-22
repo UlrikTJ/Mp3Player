@@ -9,6 +9,7 @@ import android.os.Binder
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import android.content.pm.ServiceInfo
 import com.mp3player.MainActivity
 import com.mp3player.data.entity.SongEntity
 
@@ -30,6 +31,11 @@ class AudioService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        
+        // Android 12+ (API 31+) requirement: startForeground must be called within 5 seconds.
+        // We show a placeholder notification immediately.
+        showPlaceholderNotification()
+        
         playerManager = CrossfadePlayerManager(
             context = this,
             onTrackEnded = { onTrackEndedListener?.invoke() },
@@ -64,6 +70,21 @@ class AudioService : Service() {
     }
 
     fun getPlayerManager(): CrossfadePlayerManager = playerManager
+
+    private fun showPlaceholderNotification() {
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("Audio Service")
+            .setContentText("Initializing...")
+            .setSmallIcon(android.R.drawable.ic_media_play)
+            .setOngoing(true)
+            .build()
+        
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
+    }
 
     private fun createNotificationChannel() {
         val channel = NotificationChannel(
@@ -119,7 +140,11 @@ class AudioService : Service() {
             .build()
 
         if (isPlaying) {
-            startForeground(NOTIFICATION_ID, notification)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
         } else {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                 stopForeground(STOP_FOREGROUND_DETACH)

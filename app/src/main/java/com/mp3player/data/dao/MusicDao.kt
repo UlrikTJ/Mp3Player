@@ -46,6 +46,18 @@ abstract class MusicDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     abstract suspend fun insertPlaylistSongCrossRef(crossRef: PlaylistSongCrossRef)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    abstract suspend fun insertPlaylistSongCrossRefs(crossRefs: List<PlaylistSongCrossRef>)
+
+    @Query("DELETE FROM playlist_songs WHERE playlistId = :playlistId")
+    abstract suspend fun clearPlaylistSongs(playlistId: Int)
+
+    @Transaction
+    open suspend fun updatePlaylistOrder(playlistId: Int, crossRefs: List<PlaylistSongCrossRef>) {
+        clearPlaylistSongs(playlistId)
+        insertPlaylistSongCrossRefs(crossRefs)
+    }
+
     @Query("""
         SELECT * FROM songs 
         WHERE id NOT IN (SELECT songId FROM playlist_songs WHERE playlistId = :playlistId)

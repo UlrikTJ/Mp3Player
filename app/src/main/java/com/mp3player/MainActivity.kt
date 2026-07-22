@@ -15,12 +15,14 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.zIndex
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.snap
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -88,6 +90,8 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.foundation.layout.aspectRatio
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 
 
 
@@ -106,16 +110,24 @@ class MainActivity : ComponentActivity() {
     }
 
     fun checkAndRequestScanPermission() {
-        val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            Manifest.permission.READ_MEDIA_AUDIO
+        val permissions = mutableListOf<String>()
+        
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissions.add(Manifest.permission.READ_MEDIA_AUDIO)
+            permissions.add(Manifest.permission.POST_NOTIFICATIONS)
         } else {
-            Manifest.permission.READ_EXTERNAL_STORAGE
+            permissions.add(Manifest.permission.READ_EXTERNAL_STORAGE)
         }
 
-        if (ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED) {
+        val missingPermissions = permissions.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+
+        if (missingPermissions.isEmpty()) {
             viewModel.scanLocalStorage()
         } else {
-            requestPermissionLauncher.launch(permission)
+            requestPermissionLauncher.launch(missingPermissions.first())
+            // In a real app, we'd handle multiple permissions better, but this is a start
         }
     }
 
@@ -241,6 +253,26 @@ fun MainScreen(viewModel: MusicViewModel) {
                 3 -> SettingsScreen(viewModel)
             }
         }
+    }
+
+    if (viewModel.showRestorePrompt) {
+        val context = LocalContext.current
+        AlertDialog(
+            onDismissRequest = { viewModel.dismissRestorePrompt() },
+            title = { Text("Restore Deleted Songs?") },
+            text = { Text("You have ${viewModel.pendingIgnoredCount} previously deleted or ignored songs. Would you like to re-add them to your library during this scan?") },
+            confirmButton = {
+                Button(
+                    onClick = { viewModel.confirmScanStorage(context, restoreIgnored = true) },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                ) { Text("Re-add & Scan", color = Color.Black) }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.confirmScanStorage(context, restoreIgnored = false) }) {
+                    Text("Keep Hidden & Scan")
+                }
+            }
+        )
     }
 }
 
@@ -942,6 +974,9 @@ fun PlaylistDetailDialog(
 ) {
     val songs by viewModel.playlistSongs.collectAsState()
     val addSongsList by viewModel.songsNotInPlaylist.collectAsState()
+    val playerManager by viewModel.playerManager.collectAsState()
+    val isPlaying = playerManager?.isPlaying?.collectAsState(false)?.value ?: false
+    val currentSong = playerManager?.currentPlayingSong?.collectAsState(null)?.value
     
     var showAddSongsDialog by remember { mutableStateOf(false) }
     var showStatsDialog by remember { mutableStateOf(false) }
@@ -951,10 +986,37 @@ fun PlaylistDetailDialog(
     var isReorderMode by remember { mutableStateOf(false) }
     
     var draggedIndex by remember { mutableStateOf<Int?>(null) }
-    var dragOffsetY by remember { mutableFloatStateOf(0f) }
+    var targetScreenY by remember { mutableFloatStateOf(0f) }
     val playlistListState = rememberLazyListState()
     val density = LocalDensity.current
     val playlistItemHeightPx = with(density) { 68.dp.toPx() }
+
+    LaunchedEffect(draggedIndex) {
+        if (draggedIndex == null) return@LaunchedEffect
+        while (isActive && draggedIndex != null) {
+            val layoutInfo = playlistListState.layoutInfo
+            val viewportHeight = layoutInfo.viewportSize.height.toFloat()
+            if (viewportHeight > 0f) {
+                val cardCenterY = targetScreenY + (playlistItemHeightPx / 2f)
+                val topThreshold = 140f
+                val bottomThreshold = viewportHeight - 140f
+                
+                var scrollDelta = 0f
+                if (cardCenterY > bottomThreshold) {
+                    val overflow = cardCenterY - bottomThreshold
+                    scrollDelta = (overflow * 0.35f).coerceIn(8f, 50f)
+                } else if (cardCenterY < topThreshold) {
+                    val overflow = topThreshold - cardCenterY
+                    scrollDelta = -(overflow * 0.35f).coerceIn(8f, 50f)
+                }
+                
+                if (scrollDelta != 0f) {
+                    playlistListState.scrollBy(scrollDelta)
+                }
+            }
+            delay(16)
+        }
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -965,238 +1027,434 @@ fun PlaylistDetailDialog(
             color = MaterialTheme.colorScheme.background
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                // Top Action Bar
+                // Top Action Bar with sticky Play/Pause button
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     IconButton(onClick = onDismiss) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
                     }
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                // Beautiful Banner Layout
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    val firstSongArt = songs.firstOrNull { it.artworkPath != null }?.artworkPath
-                    if (firstSongArt != null) {
-                        AsyncImage(
-                            model = firstSongArt,
-                            contentDescription = "Playlist Cover",
-                            modifier = Modifier
-                                .size(90.dp)
-                                .clip(RoundedCornerShape(12.dp)),
-                            contentScale = ContentScale.Crop
-                        )
-                    } else {
-                        Box(
-                            modifier = Modifier
-                                .size(90.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(
-                                    Brush.linearGradient(
-                                        listOf(MaterialTheme.colorScheme.primary.copy(alpha = 0.2f), MaterialTheme.colorScheme.primary)
-                                    )
-                                ),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                Icons.AutoMirrored.Filled.PlaylistPlay, 
-                                contentDescription = null, 
-                                tint = Color.Black, 
-                                modifier = Modifier.size(36.dp)
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.width(16.dp))
-
-                    Column {
+                    if (playlistListState.firstVisibleItemIndex > 0) {
                         Text(
                             playlist.name,
-                            style = MaterialTheme.typography.titleLarge,
+                            style = MaterialTheme.typography.titleMedium,
                             color = Color.White,
                             fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                            maxLines = 2
+                            maxLines = 1
                         )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            "${songs.size} tracks",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Color.Gray
-                        )
+                    } else {
+                        Spacer(modifier = Modifier.width(1.dp))
                     }
-                }
 
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Play / Shuffle Buttons
-                if (songs.isNotEmpty()) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Button(
-                            onClick = { viewModel.playPlaylist(playlist.id, shuffle = false) },
-                            modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                        ) {
-                            Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.Black)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Play", color = Color.Black, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                    if (songs.isNotEmpty()) {
+                        IconButton(onClick = {
+                            val manager = playerManager
+                            if (manager != null && isPlaying) {
+                                manager.pause()
+                            } else {
+                                viewModel.playPlaylist(playlist.id, shuffle = false)
+                            }
+                        }) {
+                            Icon(
+                                imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                contentDescription = "Play/Pause",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
                         }
-                        Button(
-                            onClick = { viewModel.playPlaylist(playlist.id, shuffle = true) },
-                            modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surface)
-                        ) {
-                            Icon(Icons.Default.Shuffle, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Shuffle", color = MaterialTheme.colorScheme.primary, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                    } else {
+                        Box(modifier = Modifier.size(48.dp))
+                    }
+                }
+
+                val currentDraggedIndex = draggedIndex
+                // Mutable ref so onDragEnd/onDragCancel always read the latest value
+                var currentTargetIndex by remember { mutableStateOf<Int?>(null) }
+                val currentTargetIndexRef = rememberUpdatedState(currentTargetIndex)
+
+                // Recalculate target index reactively whenever drag position or scroll changes
+                LaunchedEffect(currentDraggedIndex, targetScreenY, playlistListState.firstVisibleItemIndex, playlistListState.firstVisibleItemScrollOffset) {
+                    currentTargetIndex = if (currentDraggedIndex == null) null
+                    else {
+                        val visibleItems = playlistListState.layoutInfo.visibleItemsInfo
+                        if (visibleItems.isEmpty()) currentDraggedIndex
+                        else {
+                            val cardCenterY = targetScreenY + (playlistItemHeightPx / 2f)
+                            val matchingItem = visibleItems.firstOrNull { item ->
+                                item.index > 0 && cardCenterY >= item.offset && cardCenterY <= (item.offset + item.size)
+                            }
+                            if (matchingItem != null) {
+                                (matchingItem.index - 1).coerceIn(0, songs.size - 1)
+                            } else {
+                                if (cardCenterY < 0) 0
+                                else if (visibleItems.isNotEmpty() && cardCenterY > visibleItems.last().offset) songs.size - 1
+                                else currentDraggedIndex
+                            }
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(6.dp))
-
-                // Playlist Management Options Row
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    TextButton(onClick = { showRenameDialog = true }) {
-                        Icon(Icons.Default.Edit, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Rename", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
-                    }
-                    TextButton(onClick = { showAddSongsDialog = true }) {
-                        Icon(Icons.Default.Add, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Add Track", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
-                    }
-                    TextButton(onClick = { isReorderMode = !isReorderMode }) {
-                        Icon(Icons.Default.DragHandle, contentDescription = null, tint = if (isReorderMode) MaterialTheme.colorScheme.primary else Color.LightGray, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Reorder", color = if (isReorderMode) MaterialTheme.colorScheme.primary else Color.LightGray, fontSize = 12.sp)
-                    }
-                    TextButton(onClick = { showStatsDialog = true }) {
-                        Icon(Icons.Default.Tune, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Shuffle Options", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = Color.DarkGray.copy(alpha = 0.5f), thickness = 1.dp)
-                Spacer(modifier = Modifier.height(12.dp))
-
-                if (songs.isEmpty()) {
-                    Box(modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 24.dp), contentAlignment = Alignment.Center) {
-                        Text("This playlist is empty. Tap '+' to add songs!", color = Color.Gray)
-                    }
-                } else {
-                    val currentDraggedIndex = draggedIndex
-                    val currentTargetIndex = if (currentDraggedIndex != null) {
-                        val slotsMoved = (dragOffsetY / playlistItemHeightPx).roundToInt()
-                        (currentDraggedIndex + slotsMoved).coerceIn(0, songs.size - 1)
-                    } else null
-
+                Box(modifier = Modifier.weight(1f)) {
                     LazyColumn(
                         state = playlistListState,
-                        modifier = Modifier.weight(1f).padding(horizontal = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                        modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        userScrollEnabled = draggedIndex == null
                     ) {
-                        itemsIndexed(songs) { index, song ->
-                            val isDraggedItem = index == currentDraggedIndex
-                            
-                            val targetTranslationY = when {
-                                isDraggedItem -> dragOffsetY
-                                currentDraggedIndex != null && currentTargetIndex != null -> {
-                                    if (currentDraggedIndex < currentTargetIndex && index > currentDraggedIndex && index <= currentTargetIndex) {
-                                        -playlistItemHeightPx
-                                    } else if (currentDraggedIndex > currentTargetIndex && index < currentDraggedIndex && index >= currentTargetIndex) {
-                                        playlistItemHeightPx
-                                    } else 0f
+                        item {
+                            Column {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                // Banner Layout
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    val firstSongArt = songs.firstOrNull { it.artworkPath != null }?.artworkPath
+                                    if (firstSongArt != null) {
+                                        AsyncImage(
+                                            model = firstSongArt,
+                                            contentDescription = "Playlist Cover",
+                                            modifier = Modifier
+                                                .size(90.dp)
+                                                .clip(RoundedCornerShape(12.dp)),
+                                            contentScale = ContentScale.Crop
+                                        )
+                                    } else {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(90.dp)
+                                                .clip(RoundedCornerShape(12.dp))
+                                                .background(
+                                                    Brush.linearGradient(
+                                                        listOf(MaterialTheme.colorScheme.primary.copy(alpha = 0.2f), MaterialTheme.colorScheme.primary)
+                                                    )
+                                                ),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                Icons.AutoMirrored.Filled.PlaylistPlay, 
+                                                contentDescription = null, 
+                                                tint = Color.Black, 
+                                                modifier = Modifier.size(36.dp)
+                                            )
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.width(16.dp))
+
+                                    Column {
+                                        Text(
+                                            playlist.name,
+                                            style = MaterialTheme.typography.titleLarge,
+                                            color = Color.White,
+                                            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                                            maxLines = 2
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            "${songs.size} tracks",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = Color.Gray
+                                        )
+                                    }
                                 }
-                                else -> 0f
+
+                                Spacer(modifier = Modifier.height(16.dp))
+
+                                // Play / Shuffle Buttons
+                                if (songs.isNotEmpty()) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
+                                        Button(
+                                            onClick = { viewModel.playPlaylist(playlist.id, shuffle = false) },
+                                            modifier = Modifier.weight(1f),
+                                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                                        ) {
+                                            Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.Black)
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text("Play", color = Color.Black, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                                        }
+                                        Button(
+                                            onClick = { viewModel.playPlaylist(playlist.id, shuffle = true) },
+                                            modifier = Modifier.weight(1f),
+                                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surface)
+                                        ) {
+                                            Icon(Icons.Default.Shuffle, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text("Shuffle", color = MaterialTheme.colorScheme.primary, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(6.dp))
+
+                                // Playlist Management Options Row
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    TextButton(onClick = { showRenameDialog = true }) {
+                                        Icon(Icons.Default.Edit, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Rename", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
+                                    }
+                                    TextButton(onClick = { showAddSongsDialog = true }) {
+                                        Icon(Icons.Default.Add, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Add Track", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
+                                    }
+                                    TextButton(onClick = { isReorderMode = !isReorderMode }) {
+                                        Icon(Icons.Default.DragHandle, contentDescription = null, tint = if (isReorderMode) MaterialTheme.colorScheme.primary else Color.LightGray, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Reorder", color = if (isReorderMode) MaterialTheme.colorScheme.primary else Color.LightGray, fontSize = 12.sp)
+                                    }
+                                    TextButton(onClick = { showStatsDialog = true }) {
+                                        Icon(Icons.Default.Tune, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Shuffle Options", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+                                HorizontalDivider(color = Color.DarkGray.copy(alpha = 0.5f), thickness = 1.dp)
+                                Spacer(modifier = Modifier.height(12.dp))
                             }
-                            
+                        }
+
+                        if (songs.isEmpty()) {
+                            item {
+                                Box(modifier = Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) {
+                                    Text("This playlist is empty. Tap '+' to add songs!", color = Color.Gray)
+                                }
+                            }
+                        } else {
+                            itemsIndexed(songs, key = { _, song -> song.id }) { index, song ->
+                                val isDraggedItem = index == currentDraggedIndex
+                                
+                                val targetTranslationY = run {
+                                    val dragIdx = currentDraggedIndex
+                                    val targetIdx = currentTargetIndex
+                                    when {
+                                        dragIdx != null && targetIdx != null -> {
+                                            if (dragIdx < targetIdx && index > dragIdx && index <= targetIdx) {
+                                                -playlistItemHeightPx
+                                            } else if (dragIdx > targetIdx && index < dragIdx && index >= targetIdx) {
+                                                playlistItemHeightPx
+                                            } else 0f
+                                        }
+                                        else -> 0f
+                                    }
+                                }
+                                
                             val animatedY by animateFloatAsState(
                                 targetValue = targetTranslationY,
-                                animationSpec = if (isDraggedItem) spring(stiffness = Spring.StiffnessHigh) else spring(stiffness = Spring.StiffnessMediumLow),
+                                animationSpec = if (currentDraggedIndex != null) spring(stiffness = Spring.StiffnessMediumLow) else snap(),
                                 label = "playlistReorderTranslation"
                             )
 
                             Card(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .zIndex(if (isDraggedItem) 10f else 1f)
                                     .graphicsLayer {
-                                        translationY = if (isDraggedItem) dragOffsetY else animatedY
-                                        scaleX = if (isDraggedItem) 1.05f else 1.0f
-                                        scaleY = if (isDraggedItem) 1.05f else 1.0f
+                                        translationY = animatedY
+                                        alpha = if (isDraggedItem) 0.25f else 1.0f
                                     },
-                                elevation = CardDefaults.cardElevation(
-                                    defaultElevation = if (isDraggedItem) 12.dp else 0.dp
-                                ),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = if (isDraggedItem) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else MaterialTheme.colorScheme.surface
-                                ),
-                                border = if (isDraggedItem) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null
+                                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable { viewModel.playSongFromLibrary(song, playlist.id) }
+                                            .padding(vertical = 8.dp, horizontal = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        if (isReorderMode) {
+                                            Icon(
+                                                imageVector = Icons.Default.DragHandle,
+                                                contentDescription = "Drag to reorder",
+                                                tint = if (isDraggedItem) MaterialTheme.colorScheme.primary else Color.Gray,
+                                                modifier = Modifier
+                                                    .size(36.dp)
+                                                    .padding(4.dp)
+                                                    .pointerInput(index) {
+                                                        detectDragGestures(
+                                                            onDragStart = { touchOffset ->
+                                                                val itemInfo = playlistListState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == song.id }
+                                                                val startY = itemInfo?.offset?.toFloat() ?: (index * playlistItemHeightPx)
+                                                                draggedIndex = index
+                                                                targetScreenY = startY + touchOffset.y - (playlistItemHeightPx / 2f)
+                                                            },
+                                                            onDragEnd = {
+                                                                val from = draggedIndex
+                                                                val to = currentTargetIndexRef.value
+                                                                if (from != null && to != null && from != to) {
+                                                                    viewModel.reorderSongInPlaylist(playlist.id, from, to)
+                                                                }
+                                                                draggedIndex = null
+                                                            },
+                                                            onDragCancel = {
+                                                                val from = draggedIndex
+                                                                val to = currentTargetIndexRef.value
+                                                                if (from != null && to != null && from != to) {
+                                                                    viewModel.reorderSongInPlaylist(playlist.id, from, to)
+                                                                }
+                                                                draggedIndex = null
+                                                            },
+                                                            onDrag = { change, dragAmount ->
+                                                                change.consume()
+                                                                targetScreenY += dragAmount.y
+                                                            }
+                                                        )
+                                                    }
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                        }
+                                        
+                                        if (song.artworkPath != null) {
+                                            AsyncImage(
+                                                model = song.artworkPath,
+                                                contentDescription = "Album Art",
+                                                modifier = Modifier
+                                                    .size(52.dp)
+                                                    .clip(RoundedCornerShape(8.dp)),
+                                                contentScale = ContentScale.Crop
+                                            )
+                                        } else {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(52.dp)
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .background(Color.DarkGray),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.LightGray)
+                                            }
+                                        }
+                                        Spacer(modifier = Modifier.width(16.dp))
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                song.title, 
+                                                color = Color.White, 
+                                                fontSize = 15.sp, 
+                                                maxLines = 1,
+                                                fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
+                                            )
+                                            Text(song.artist, color = Color.Gray, fontSize = 13.sp, maxLines = 1)
+                                        }
+                                        
+                                        // Options three dots button
+                                        var menuExpanded by remember { mutableStateOf(false) }
+                                        Box {
+                                            IconButton(onClick = { menuExpanded = true }) {
+                                                Icon(Icons.Default.MoreVert, contentDescription = "Options", tint = Color.LightGray)
+                                            }
+                                            DropdownMenu(
+                                                expanded = menuExpanded,
+                                                onDismissRequest = { menuExpanded = false }
+                                            ) {
+                                                DropdownMenuItem(
+                                                    text = { Text("Add to Queue") },
+                                                    onClick = {
+                                                        viewModel.addToQueue(song)
+                                                        menuExpanded = false
+                                                    }
+                                                )
+                                                DropdownMenuItem(
+                                                    text = { Text("Change Weight") },
+                                                    onClick = {
+                                                        showWeightEditDialog = song
+                                                        menuExpanded = false
+                                                    }
+                                                )
+                                                DropdownMenuItem(
+                                                    text = { Text("Remove from Playlist") },
+                                                    onClick = {
+                                                        songToRemove = song
+                                                        menuExpanded = false
+                                                    }
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Transparent Parent Gesture Interceptor while dragging
+                    if (draggedIndex != null) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .pointerInput(Unit) {
+                                    detectDragGestures(
+                                        onDragEnd = {
+                                            val from = draggedIndex
+                                            val to = currentTargetIndexRef.value
+                                            if (from != null && to != null && from != to) {
+                                                viewModel.reorderSongInPlaylist(playlist.id, from, to)
+                                            }
+                                            draggedIndex = null
+                                        },
+                                        onDragCancel = {
+                                            val from = draggedIndex
+                                            val to = currentTargetIndexRef.value
+                                            if (from != null && to != null && from != to) {
+                                                viewModel.reorderSongInPlaylist(playlist.id, from, to)
+                                            }
+                                            draggedIndex = null
+                                        },
+                                        onDrag = { change, dragAmount ->
+                                            change.consume()
+                                            targetScreenY += dragAmount.y
+                                        }
+                                    )
+                                }
+                        )
+                    }
+
+                    // Floating Overlay Card for Dragged Song — matches regular card look
+                    val draggedSong = currentDraggedIndex?.let { songs.getOrNull(it) }
+                    if (draggedSong != null) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp)
+                                .graphicsLayer {
+                                    translationY = targetScreenY
+                                    scaleX = 1.03f
+                                    scaleY = 1.03f
+                                    shadowElevation = 16f
+                                }
+                        ) {
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
                             ) {
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .clickable { viewModel.playSongFromLibrary(song, playlist.id) }
                                         .padding(vertical = 8.dp, horizontal = 4.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    if (isReorderMode) {
-                                        Icon(
-                                            imageVector = Icons.Default.DragHandle,
-                                            contentDescription = "Drag to reorder",
-                                            tint = if (isDraggedItem) MaterialTheme.colorScheme.primary else Color.Gray,
-                                            modifier = Modifier
-                                                .size(36.dp)
-                                                .padding(4.dp)
-                                                .pointerInput(index) {
-                                                    detectDragGestures(
-                                                        onDragStart = { 
-                                                            draggedIndex = index
-                                                            dragOffsetY = 0f 
-                                                        },
-                                                        onDragEnd = {
-                                                            val from = draggedIndex
-                                                            val to = currentTargetIndex
-                                                            if (from != null && to != null && from != to) {
-                                                                viewModel.reorderSongInPlaylist(playlist.id, from, to)
-                                                            }
-                                                            draggedIndex = null
-                                                            dragOffsetY = 0f
-                                                        },
-                                                        onDragCancel = { 
-                                                            draggedIndex = null
-                                                            dragOffsetY = 0f
-                                                        },
-                                                        onDrag = { change, dragAmount ->
-                                                            change.consume()
-                                                            dragOffsetY += dragAmount.y
-                                                        }
-                                                    )
-                                                }
-                                        )
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                    }
-                                    
-                                    if (song.artworkPath != null) {
+                                    Icon(
+                                        imageVector = Icons.Default.DragHandle,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(36.dp).padding(4.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    if (draggedSong.artworkPath != null) {
                                         AsyncImage(
-                                            model = song.artworkPath,
+                                            model = draggedSong.artworkPath,
                                             contentDescription = "Album Art",
                                             modifier = Modifier
                                                 .size(52.dp)
@@ -1217,58 +1475,24 @@ fun PlaylistDetailDialog(
                                     Spacer(modifier = Modifier.width(16.dp))
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
-                                            song.title, 
-                                            color = Color.White, 
-                                            fontSize = 15.sp, 
+                                            draggedSong.title,
+                                            color = Color.White,
+                                            fontSize = 15.sp,
                                             maxLines = 1,
                                             fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
                                         )
-                                        Text(song.artist, color = Color.Gray, fontSize = 13.sp, maxLines = 1)
-                                    }
-                                    
-                                    // Options three dots button
-                                    var menuExpanded by remember { mutableStateOf(false) }
-                                    Box {
-                                        IconButton(onClick = { menuExpanded = true }) {
-                                            Icon(Icons.Default.MoreVert, contentDescription = "Options", tint = Color.LightGray)
-                                        }
-                                        DropdownMenu(
-                                            expanded = menuExpanded,
-                                            onDismissRequest = { menuExpanded = false }
-                                        ) {
-                                            DropdownMenuItem(
-                                                text = { Text("Add to Queue") },
-                                                onClick = {
-                                                    viewModel.addToQueue(song)
-                                                    menuExpanded = false
-                                                }
-                                            )
-                                            DropdownMenuItem(
-                                                text = { Text("Change Weight") },
-                                                onClick = {
-                                                    showWeightEditDialog = song
-                                                    menuExpanded = false
-                                                }
-                                            )
-                                            DropdownMenuItem(
-                                                text = { Text("Remove from Playlist") },
-                                                onClick = {
-                                                    songToRemove = song
-                                                    menuExpanded = false
-                                                }
-                                            )
-                                        }
+                                        Text(draggedSong.artist, color = Color.Gray, fontSize = 13.sp, maxLines = 1)
                                     }
                                 }
                             }
                         }
                     }
-                    val playerManager by viewModel.playerManager.collectAsState()
-                    val currentSong = playerManager?.currentPlayingSong?.collectAsState(null)?.value
-                    currentSong?.let { activeSong ->
-                        Spacer(modifier = Modifier.height(8.dp))
-                        MiniPlayer(song = activeSong, viewModel = viewModel)
-                    }
+                }
+
+                val activeSong = currentSong
+                if (activeSong != null) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    MiniPlayer(song = activeSong, viewModel = viewModel)
                 }
             }
         }
@@ -2071,14 +2295,41 @@ fun SearchDetailDialog(
 
 @Composable
 fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
-    val queue = viewModel.activeQueue
+    val queue by viewModel.currentQueueFlow.collectAsState()
     val activeIndex = viewModel.activeQueueIndex
     val listState = rememberLazyListState()
     
     var draggedIndex by remember { mutableStateOf<Int?>(null) }
-    var dragOffsetY by remember { mutableFloatStateOf(0f) }
+    var targetScreenY by remember { mutableFloatStateOf(0f) }
     val density = LocalDensity.current
     val itemHeightPx = with(density) { 64.dp.toPx() }
+
+    LaunchedEffect(draggedIndex) {
+        if (draggedIndex == null) return@LaunchedEffect
+        while (isActive && draggedIndex != null) {
+            val layoutInfo = listState.layoutInfo
+            val viewportHeight = layoutInfo.viewportSize.height.toFloat()
+            if (viewportHeight > 0f) {
+                val cardCenterY = targetScreenY + (itemHeightPx / 2f)
+                val topThreshold = 140f
+                val bottomThreshold = viewportHeight - 140f
+                
+                var scrollDelta = 0f
+                if (cardCenterY > bottomThreshold) {
+                    val overflow = cardCenterY - bottomThreshold
+                    scrollDelta = (overflow * 0.35f).coerceIn(8f, 50f)
+                } else if (cardCenterY < topThreshold) {
+                    val overflow = topThreshold - cardCenterY
+                    scrollDelta = -(overflow * 0.35f).coerceIn(8f, 50f)
+                }
+                
+                if (scrollDelta != 0f) {
+                    listState.scrollBy(scrollDelta)
+                }
+            }
+            delay(16)
+        }
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -2107,105 +2358,228 @@ fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
                     }
                 } else {
                     val currentDraggedIndex = draggedIndex
-                    val currentTargetIndex = if (currentDraggedIndex != null) {
-                        val slotsMoved = (dragOffsetY / itemHeightPx).roundToInt()
-                        (currentDraggedIndex + slotsMoved).coerceIn(0, queue.size - 1)
-                    } else null
+                    // Mutable ref so onDragEnd/onDragCancel always read the latest value
+                    var currentTargetIndex by remember { mutableStateOf<Int?>(null) }
+                    val currentTargetIndexRef = rememberUpdatedState(currentTargetIndex)
 
-                    LazyColumn(
-                        state = listState,
-                        modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        itemsIndexed(queue) { index, song ->
-                            val isActive = index == activeIndex
-                            val isDraggedItem = index == currentDraggedIndex
-                            
-                            val targetTranslationY = when {
-                                isDraggedItem -> dragOffsetY
-                                currentDraggedIndex != null && currentTargetIndex != null -> {
-                                    if (currentDraggedIndex < currentTargetIndex && index > currentDraggedIndex && index <= currentTargetIndex) {
-                                        -itemHeightPx
-                                    } else if (currentDraggedIndex > currentTargetIndex && index < currentDraggedIndex && index >= currentTargetIndex) {
-                                        itemHeightPx
-                                    } else 0f
+                    // Recalculate target index reactively whenever drag position or scroll changes
+                    LaunchedEffect(currentDraggedIndex, targetScreenY, listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset) {
+                        currentTargetIndex = if (currentDraggedIndex == null) null
+                        else {
+                            val visibleItems = listState.layoutInfo.visibleItemsInfo
+                            if (visibleItems.isEmpty()) currentDraggedIndex
+                            else {
+                                val cardCenterY = targetScreenY + (itemHeightPx / 2f)
+                                val matchingItem = visibleItems.firstOrNull { item ->
+                                    cardCenterY >= item.offset && cardCenterY <= (item.offset + item.size)
                                 }
-                                else -> 0f
+                                if (matchingItem != null) {
+                                    matchingItem.index.coerceIn(0, queue.size - 1)
+                                } else {
+                                    if (cardCenterY < 0) 0
+                                    else if (visibleItems.isNotEmpty() && cardCenterY > visibleItems.last().offset) queue.size - 1
+                                    else currentDraggedIndex
+                                }
                             }
-                            
+                        }
+                    }
+
+                    Box(modifier = Modifier.weight(1f)) {
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier.fillMaxSize(),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            userScrollEnabled = draggedIndex == null
+                        ) {
+                            itemsIndexed(queue, key = { _, song -> song.instanceId }) { index, song ->
+                                val isActive = index == activeIndex
+                                val isDraggedItem = index == currentDraggedIndex
+                                
+                                val targetTranslationY = run {
+                                    val dragIdx = currentDraggedIndex
+                                    val targetIdx = currentTargetIndex
+                                    when {
+                                        dragIdx != null && targetIdx != null -> {
+                                            if (dragIdx < targetIdx && index > dragIdx && index <= targetIdx) {
+                                                -itemHeightPx
+                                            } else if (dragIdx > targetIdx && index < dragIdx && index >= targetIdx) {
+                                                itemHeightPx
+                                            } else 0f
+                                        }
+                                        else -> 0f
+                                    }
+                                }
+                                
                             val animatedY by animateFloatAsState(
                                 targetValue = targetTranslationY,
-                                animationSpec = if (isDraggedItem) spring(stiffness = Spring.StiffnessHigh) else spring(stiffness = Spring.StiffnessMediumLow),
+                                animationSpec = if (currentDraggedIndex != null) spring(stiffness = Spring.StiffnessMediumLow) else snap(),
                                 label = "reorderTranslation"
                             )
 
                             Card(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .zIndex(if (isDraggedItem) 10f else 1f)
+                                    .animateItem()
                                     .graphicsLayer {
-                                        translationY = if (isDraggedItem) dragOffsetY else animatedY
-                                        scaleX = if (isDraggedItem) 1.05f else 1.0f
-                                        scaleY = if (isDraggedItem) 1.05f else 1.0f
+                                        translationY = animatedY
+                                        alpha = if (isDraggedItem) 0.25f else 1.0f
                                     },
-                                elevation = CardDefaults.cardElevation(
-                                    defaultElevation = if (isDraggedItem) 12.dp else 2.dp
-                                ),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = if (isDraggedItem) 
-                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) 
-                                    else if (isActive) 
-                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) 
-                                    else 
-                                        MaterialTheme.colorScheme.surface
-                                ),
-                                border = if (isDraggedItem || isActive) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null
-                            ) {
-                                Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        imageVector = Icons.Default.DragHandle,
-                                        contentDescription = "Reorder Queue",
-                                        tint = if (isDraggedItem) MaterialTheme.colorScheme.primary else Color.Gray,
+                                    elevation = CardDefaults.cardElevation(
+                                        defaultElevation = if (isActive) 2.dp else 0.dp
+                                    ),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = if (isActive) 
+                                            MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) 
+                                        else 
+                                            MaterialTheme.colorScheme.surface
+                                    ),
+                                    border = if (isActive) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null
+                                ) {
+                                    Row(
                                         modifier = Modifier
-                                            .size(36.dp)
-                                            .padding(4.dp)
-                                            .pointerInput(index) {
-                                                detectDragGestures(
-                                                    onDragStart = { 
-                                                        draggedIndex = index
-                                                        dragOffsetY = 0f 
-                                                    },
-                                                    onDragEnd = {
-                                                        val from = draggedIndex
-                                                        val to = currentTargetIndex
-                                                        if (from != null && to != null && from != to) {
-                                                            viewModel.moveQueueItem(from, to)
+                                            .fillMaxWidth()
+                                            .clickable { viewModel.playQueueSongAt(index) }
+                                            .padding(12.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.DragHandle,
+                                            contentDescription = "Reorder Queue",
+                                            tint = if (isDraggedItem) MaterialTheme.colorScheme.primary else Color.Gray,
+                                            modifier = Modifier
+                                                .size(36.dp)
+                                                .padding(4.dp)
+                                                .pointerInput(index) {
+                                                    detectDragGestures(
+                                                        onDragStart = { touchOffset -> 
+                                                            val itemInfo = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == song.instanceId }
+                                                            val startY = itemInfo?.offset?.toFloat() ?: (index * itemHeightPx)
+                                                            draggedIndex = index
+                                                            targetScreenY = startY + touchOffset.y - (itemHeightPx / 2f)
+                                                        },
+                                                        onDragEnd = {
+                                                            val from = draggedIndex
+                                                            val to = currentTargetIndexRef.value
+                                                            if (from != null && to != null && from != to) {
+                                                                viewModel.moveQueueItem(from, to)
+                                                            }
+                                                            draggedIndex = null
+                                                        },
+                                                        onDragCancel = { 
+                                                            val from = draggedIndex
+                                                            val to = currentTargetIndexRef.value
+                                                            if (from != null && to != null && from != to) {
+                                                                viewModel.moveQueueItem(from, to)
+                                                            }
+                                                            draggedIndex = null
+                                                        },
+                                                        onDrag = { change, dragAmount ->
+                                                            change.consume()
+                                                            targetScreenY += dragAmount.y
                                                         }
-                                                        draggedIndex = null
-                                                        dragOffsetY = 0f
-                                                    },
-                                                    onDragCancel = { 
-                                                        draggedIndex = null
-                                                        dragOffsetY = 0f
-                                                    },
-                                                    onDrag = { change, dragAmount ->
-                                                        change.consume()
-                                                        dragOffsetY += dragAmount.y
-                                                    }
-                                                )
+                                                    )
+                                                }
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = "${index + 1}. ${song.title}",
+                                            color = if (isActive) MaterialTheme.colorScheme.primary else Color.White,
+                                            fontSize = 14.sp,
+                                            fontWeight = if (isActive) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal,
+                                            modifier = Modifier.weight(1f),
+                                            maxLines = 1
+                                        )
+                                        if (isActive) {
+                                            Text("Playing", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Transparent Parent Gesture Interceptor while dragging
+                        if (draggedIndex != null) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .pointerInput(Unit) {
+                                        detectDragGestures(
+                                            onDragEnd = {
+                                                val from = draggedIndex
+                                                val to = currentTargetIndexRef.value
+                                                if (from != null && to != null && from != to) {
+                                                    viewModel.moveQueueItem(from, to)
+                                                }
+                                                draggedIndex = null
+                                            },
+                                            onDragCancel = {
+                                                val from = draggedIndex
+                                                val to = currentTargetIndexRef.value
+                                                if (from != null && to != null && from != to) {
+                                                    viewModel.moveQueueItem(from, to)
+                                                }
+                                                draggedIndex = null
+                                            },
+                                            onDrag = { change, dragAmount ->
+                                                change.consume()
+                                                targetScreenY += dragAmount.y
                                             }
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(
-                                        text = "${index + 1}. ${song.title}",
-                                        color = if (isActive || isDraggedItem) MaterialTheme.colorScheme.primary else Color.White,
-                                        fontSize = 14.sp,
-                                        fontWeight = if (isActive || isDraggedItem) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal,
-                                        modifier = Modifier.weight(1f),
-                                        maxLines = 1
-                                    )
-                                    if (isActive) {
-                                        Text("Playing", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                                        )
+                                    }
+                            )
+                        }
+
+                        // Floating Overlay Card for Dragged Queue Song — matches regular card look
+                        val draggedSong = currentDraggedIndex?.let { queue.getOrNull(it) }
+                        val isActiveDragged = currentDraggedIndex == activeIndex
+                        if (draggedSong != null) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .graphicsLayer {
+                                        translationY = targetScreenY
+                                        scaleX = 1.03f
+                                        scaleY = 1.03f
+                                        shadowElevation = 16f
+                                    }
+                            ) {
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    elevation = CardDefaults.cardElevation(
+                                        defaultElevation = if (isActiveDragged) 2.dp else 0.dp
+                                    ),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = if (isActiveDragged)
+                                            MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                        else
+                                            MaterialTheme.colorScheme.surface
+                                    ),
+                                    border = if (isActiveDragged) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(12.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.DragHandle,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(36.dp).padding(4.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = "${(currentDraggedIndex ?: 0) + 1}. ${draggedSong.title}",
+                                            color = if (isActiveDragged) MaterialTheme.colorScheme.primary else Color.White,
+                                            fontSize = 14.sp,
+                                            fontWeight = if (isActiveDragged) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal,
+                                            modifier = Modifier.weight(1f),
+                                            maxLines = 1
+                                        )
+                                        if (isActiveDragged) {
+                                            Text("Playing", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                                        }
                                     }
                                 }
                             }

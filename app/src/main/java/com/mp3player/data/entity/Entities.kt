@@ -18,7 +18,11 @@ data class SongEntity(
     val source: String, // "LOCAL" or "YOUTUBE"
     val youtubeVideoId: String?,
     val dateAdded: Long = System.currentTimeMillis()
-)
+) {
+    // Unique ID for transient UI operations like queueing
+    @androidx.room.Ignore
+    var instanceId: Long = java.util.Random().nextLong()
+}
 
 @Entity(tableName = "playlists")
 data class PlaylistEntity(

@@ -95,6 +95,13 @@ class CrossfadePlayerManager(
             cancelCrossfade()
         }
 
+        val file = java.io.File(song.filePath)
+        if (song.id > 0 && !file.exists()) {
+            // Song is local but file is missing (maybe just deleted)
+            onTrackEnded()
+            return
+        }
+
         currentSong = song
         _currentPlayingSong.value = song
         nextSong = nextSongToPrepare
@@ -123,6 +130,9 @@ class CrossfadePlayerManager(
     }
 
     private fun prepareNextPlayer(song: SongEntity) {
+        val file = java.io.File(song.filePath)
+        if (song.id > 0 && !file.exists()) return
+
         nextPlayer.stop()
         val mediaItem = MediaItem.fromUri(Uri.parse(song.filePath))
         nextPlayer.setMediaItem(mediaItem)
