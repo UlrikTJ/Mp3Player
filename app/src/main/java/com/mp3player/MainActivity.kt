@@ -894,10 +894,27 @@ fun SearchScreen(viewModel: MusicViewModel) {
 @Composable
 fun PlaylistCollageCover(
     songs: List<SongEntity>,
+    stats: List<com.mp3player.data.dao.SongStats> = emptyList(),
     modifier: Modifier = Modifier
 ) {
-    val artworkPaths = remember(songs) {
-        songs.mapNotNull { it.artworkPath }.filter { it.isNotBlank() }
+    val gridArtworks = remember(songs, stats) {
+        val songsWithArt = songs.filter { !it.artworkPath.isNullOrBlank() }
+        if (songsWithArt.isEmpty()) return@remember emptyList<String>()
+        
+        val statsMap = stats.associate { it.songId to it.playCount }
+        
+        // Sort by play count descending, with unplayed fallback
+        val sortedByViews = songsWithArt.sortedWith(
+            compareByDescending<SongEntity> { statsMap[it.id] ?: 0 }
+                .thenBy { it.title }
+        )
+        
+        // Select top 9 songs (or cycle if total songs with art < 9)
+        val top9 = sortedByViews.take(9)
+        val nineArtworks = List(9) { index -> top9[index % top9.size].artworkPath!! }
+        
+        // Randomize placement in the 3x3 grid
+        nineArtworks.shuffled()
     }
 
     Box(
@@ -910,7 +927,7 @@ fun PlaylistCollageCover(
             ),
         contentAlignment = Alignment.Center
     ) {
-        if (artworkPaths.isEmpty()) {
+        if (gridArtworks.isEmpty()) {
             Icon(
                 Icons.AutoMirrored.Filled.PlaylistPlay,
                 contentDescription = null,
@@ -918,10 +935,6 @@ fun PlaylistCollageCover(
                 modifier = Modifier.size(36.dp)
             )
         } else {
-            val gridArtworks = remember(artworkPaths) {
-                List(9) { index -> artworkPaths[index % artworkPaths.size] }
-            }
-
             Column(modifier = Modifier.fillMaxSize()) {
                 for (row in 0..2) {
                     Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
@@ -952,8 +965,12 @@ fun PlaylistCardCover(
     val songs by remember(playlistId) {
         viewModel.getSongsForPlaylistFlow(playlistId)
     }.collectAsState(initial = emptyList())
+    
+    val stats by remember(playlistId) {
+        viewModel.getPlaylistSongStatsFlow(playlistId)
+    }.collectAsState(initial = emptyList())
 
-    PlaylistCollageCover(songs = songs, modifier = modifier)
+    PlaylistCollageCover(songs = songs, stats = stats, modifier = modifier)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1115,7 +1132,7 @@ fun PlaylistDetailView(
     val addSongsList by viewModel.songsNotInPlaylist.collectAsState()
     val playerManager by viewModel.playerManager.collectAsState()
     val isPlaying = playerManager?.isPlaying?.collectAsState(false)?.value ?: false
-    val currentSong = playerManager?.currentPlayingSong?.collectAsState(null)?.value
+    val playlistStatsForCover by viewModel.playlistStats.collectAsState()
     
     var showAddSongsDialog by remember { mutableStateOf(false) }
     var showStatsDialog by remember { mutableStateOf(false) }
@@ -1130,13 +1147,16 @@ fun PlaylistDetailView(
     val density = LocalDensity.current
     val playlistItemHeightPx = with(density) { 68.dp.toPx() }
 
-    LaunchedEffect(draggedIndex) {
+    val draggedIndexRef = rememberUpdatedState(draggedIndex)
+    val targetScreenYRef = rememberUpdatedState(targetScreenY)
+
+    LaunchedEffect(draggedIndex != null) {
         if (draggedIndex == null) return@LaunchedEffect
-        while (isActive && draggedIndex != null) {
+        while (isActive && draggedIndexRef.value != null) {
             val layoutInfo = playlistListState.layoutInfo
             val viewportHeight = layoutInfo.viewportSize.height.toFloat()
             if (viewportHeight > 0f) {
-                val cardCenterY = targetScreenY + (playlistItemHeightPx / 2f)
+                val cardCenterY = targetScreenYRef.value + (playlistItemHeightPx / 2f)
                 val topThreshold = 140f
                 val bottomThreshold = viewportHeight - 140f
                 
@@ -1217,16 +1237,28 @@ fun PlaylistDetailView(
                         val visibleItems = playlistListState.layoutInfo.visibleItemsInfo
                         if (visibleItems.isEmpty()) currentDraggedIndex
                         else {
-                            val cardCenterY = targetScreenY + (playlistItemHeightPx / 2f)
-                            val matchingItem = visibleItems.firstOrNull { item ->
-                                item.index > 0 && cardCenterY >= item.offset && cardCenterY <= (item.offset + item.size)
-                            }
-                            if (matchingItem != null) {
-                                (matchingItem.index - 1).coerceIn(0, songs.size - 1)
-                            } else {
-                                if (cardCenterY < 0) 0
-                                else if (visibleItems.isNotEmpty() && cardCenterY > visibleItems.last().offset) songs.size - 1
-                                else currentDraggedIndex
+                            // Only consider song items (skip header at index 0)
+                            val songItems = visibleItems.filter { it.index > 0 }
+                            if (songItems.isEmpty()) currentDraggedIndex
+                            else {
+                                val cardCenterY = targetScreenY + (playlistItemHeightPx / 2f)
+                                val matchingItem = songItems.firstOrNull { item ->
+                                    val itemCenter = item.offset + (item.size / 2f)
+                                    cardCenterY >= item.offset && cardCenterY <= (item.offset + item.size)
+                                }
+                                if (matchingItem != null) {
+                                    (matchingItem.index - 1).coerceIn(0, songs.size - 1)
+                                } else {
+                                    val firstItem = songItems.first()
+                                    val lastItem = songItems.last()
+                                    if (cardCenterY < firstItem.offset) {
+                                        (firstItem.index - 1).coerceIn(0, songs.size - 1)
+                                    } else if (cardCenterY > (lastItem.offset + lastItem.size)) {
+                                        (lastItem.index - 1).coerceIn(0, songs.size - 1)
+                                    } else {
+                                        currentDraggedIndex
+                                    }
+                                }
                             }
                         }
                     }
@@ -1249,6 +1281,7 @@ fun PlaylistDetailView(
                                 ) {
                                     PlaylistCollageCover(
                                         songs = songs,
+                                        stats = playlistStatsForCover,
                                         modifier = Modifier.size(90.dp)
                                     )
 
@@ -1351,10 +1384,15 @@ fun PlaylistDetailView(
                                     val targetIdx = currentTargetIndex
                                     when {
                                         dragIdx != null && targetIdx != null -> {
+                                            // Get actual item size from layout info
+                                            val actualItemSize = playlistListState.layoutInfo.visibleItemsInfo
+                                                .firstOrNull { it.index > 0 }?.size?.toFloat() ?: playlistItemHeightPx
+                                            val spacing = with(density) { 4.dp.toPx() }
+                                            val totalItemHeight = actualItemSize + spacing
                                             if (dragIdx < targetIdx && index > dragIdx && index <= targetIdx) {
-                                                -playlistItemHeightPx
+                                                -totalItemHeight
                                             } else if (dragIdx > targetIdx && index < dragIdx && index >= targetIdx) {
-                                                playlistItemHeightPx
+                                                totalItemHeight
                                             } else 0f
                                         }
                                         else -> 0f
@@ -1363,7 +1401,7 @@ fun PlaylistDetailView(
                                 
                             val animatedY by animateFloatAsState(
                                 targetValue = targetTranslationY,
-                                animationSpec = if (currentDraggedIndex != null) spring(stiffness = Spring.StiffnessMediumLow) else snap(),
+                                animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
                                 label = "playlistReorderTranslation"
                             )
 
@@ -1598,11 +1636,7 @@ fun PlaylistDetailView(
                     }
                 }
 
-                val activeSong = currentSong
-                if (activeSong != null) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    MiniPlayer(song = activeSong, viewModel = viewModel)
-                }            }
+                }
         }
 
         songToRemove?.let { songToDelete ->
@@ -2482,9 +2516,15 @@ fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
                                 if (matchingItem != null) {
                                     matchingItem.index.coerceIn(0, queue.size - 1)
                                 } else {
-                                    if (cardCenterY < 0) 0
-                                    else if (visibleItems.isNotEmpty() && cardCenterY > visibleItems.last().offset) queue.size - 1
-                                    else currentDraggedIndex
+                                    val firstItem = visibleItems.first()
+                                    val lastItem = visibleItems.last()
+                                    if (cardCenterY < firstItem.offset) {
+                                        firstItem.index.coerceIn(0, queue.size - 1)
+                                    } else if (cardCenterY > (lastItem.offset + lastItem.size)) {
+                                        lastItem.index.coerceIn(0, queue.size - 1)
+                                    } else {
+                                        currentDraggedIndex
+                                    }
                                 }
                             }
                         }

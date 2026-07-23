@@ -991,6 +991,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         return musicDao.getSongsForPlaylistFlow(playlistId)
     }
 
+    fun getPlaylistSongStatsFlow(playlistId: Int): kotlinx.coroutines.flow.Flow<List<com.mp3player.data.dao.SongStats>> {
+        return musicDao.getPlaylistSongStatsFlow(playlistId)
+    }
+
     fun playQueueSongAt(index: Int) {
         val queue = _currentQueue.value.toMutableList()
         if (index < 0 || index >= queue.size) return
