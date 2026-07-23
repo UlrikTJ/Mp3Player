@@ -1129,6 +1129,7 @@ fun PlaylistDetailView(
     onBack: () -> Unit
 ) {
     val songs by viewModel.playlistSongs.collectAsState()
+    var displaySongs by remember(songs) { mutableStateOf(songs) }
     val addSongsList by viewModel.songsNotInPlaylist.collectAsState()
     val playerManager by viewModel.playerManager.collectAsState()
     val isPlaying = playerManager?.isPlaying?.collectAsState(false)?.value ?: false
@@ -1359,14 +1360,14 @@ fun PlaylistDetailView(
                             }
                         }
 
-                        if (songs.isEmpty()) {
+                        if (displaySongs.isEmpty()) {
                             item {
                                 Box(modifier = Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) {
                                     Text("This playlist is empty. Tap '+' to add songs!", color = Color.Gray)
                                 }
                             }
                         } else {
-                            itemsIndexed(songs, key = { _, song -> song.id }) { index, song ->
+                            itemsIndexed(displaySongs, key = { _, song -> song.id }) { index, song ->
                                 val isDraggedItem = index == currentDraggedIndex
                                 
                                 val targetTranslationY = run {
@@ -1432,6 +1433,12 @@ fun PlaylistDetailView(
                                                                 val from = draggedIndex
                                                                 val to = currentTargetIndexRef.value
                                                                 if (from != null && to != null && from != to) {
+                                                                    val updated = displaySongs.toMutableList()
+                                                                    if (from in updated.indices && to in updated.indices) {
+                                                                        val itemToMove = updated.removeAt(from)
+                                                                        updated.add(to, itemToMove)
+                                                                        displaySongs = updated
+                                                                    }
                                                                     viewModel.reorderSongInPlaylist(playlist.id, from, to)
                                                                 }
                                                                 draggedIndex = null
@@ -1440,6 +1447,12 @@ fun PlaylistDetailView(
                                                                 val from = draggedIndex
                                                                 val to = currentTargetIndexRef.value
                                                                 if (from != null && to != null && from != to) {
+                                                                    val updated = displaySongs.toMutableList()
+                                                                    if (from in updated.indices && to in updated.indices) {
+                                                                        val itemToMove = updated.removeAt(from)
+                                                                        updated.add(to, itemToMove)
+                                                                        displaySongs = updated
+                                                                    }
                                                                     viewModel.reorderSongInPlaylist(playlist.id, from, to)
                                                                 }
                                                                 draggedIndex = null
@@ -1536,6 +1549,12 @@ fun PlaylistDetailView(
                                             val from = draggedIndex
                                             val to = currentTargetIndexRef.value
                                             if (from != null && to != null && from != to) {
+                                                val updated = displaySongs.toMutableList()
+                                                if (from in updated.indices && to in updated.indices) {
+                                                    val itemToMove = updated.removeAt(from)
+                                                    updated.add(to, itemToMove)
+                                                    displaySongs = updated
+                                                }
                                                 viewModel.reorderSongInPlaylist(playlist.id, from, to)
                                             }
                                             draggedIndex = null
@@ -1544,6 +1563,12 @@ fun PlaylistDetailView(
                                             val from = draggedIndex
                                             val to = currentTargetIndexRef.value
                                             if (from != null && to != null && from != to) {
+                                                val updated = displaySongs.toMutableList()
+                                                if (from in updated.indices && to in updated.indices) {
+                                                    val itemToMove = updated.removeAt(from)
+                                                    updated.add(to, itemToMove)
+                                                    displaySongs = updated
+                                                }
                                                 viewModel.reorderSongInPlaylist(playlist.id, from, to)
                                             }
                                             draggedIndex = null
@@ -1558,7 +1583,7 @@ fun PlaylistDetailView(
                     }
 
                     // Floating Overlay Card for Dragged Song — matches regular card look
-                    val draggedSong = currentDraggedIndex?.let { songs.getOrNull(it) }
+                    val draggedSong = currentDraggedIndex?.let { displaySongs.getOrNull(it) }
                     if (draggedSong != null) {
                         Box(
                             modifier = Modifier
@@ -2426,6 +2451,7 @@ fun SearchDetailDialog(
 @Composable
 fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
     val queue by viewModel.currentQueueFlow.collectAsState()
+    var displayQueue by remember(queue) { mutableStateOf(queue) }
     val activeIndex = viewModel.activeQueueIndex
     val listState = rememberLazyListState()
     
@@ -2482,7 +2508,7 @@ fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
                 }
                 Spacer(modifier = Modifier.height(16.dp))
                 
-                if (queue.isEmpty()) {
+                if (displayQueue.isEmpty()) {
                     Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                         Text("Queue is empty", color = Color.Gray)
                     }
@@ -2505,7 +2531,7 @@ fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
                                     kotlin.math.abs(cardCenterY - itemCenter)
                                 }
                                 if (closestItem != null) {
-                                    closestItem.index.coerceIn(0, queue.size - 1)
+                                    closestItem.index.coerceIn(0, displayQueue.size - 1)
                                 } else currentDraggedIndex
                             }
                         }
@@ -2518,7 +2544,7 @@ fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                             userScrollEnabled = draggedIndex == null
                         ) {
-                            itemsIndexed(queue, key = { _, song -> song.instanceId }) { index, song ->
+                            itemsIndexed(displayQueue, key = { _, song -> song.instanceId }) { index, song ->
                                 val isActive = index == activeIndex
                                 val isDraggedItem = index == currentDraggedIndex
                                 
@@ -2588,6 +2614,12 @@ fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
                                                             val from = draggedIndex
                                                             val to = currentTargetIndexRef.value
                                                             if (from != null && to != null && from != to) {
+                                                                val updated = displayQueue.toMutableList()
+                                                                if (from in updated.indices && to in updated.indices) {
+                                                                    val itemToMove = updated.removeAt(from)
+                                                                    updated.add(to, itemToMove)
+                                                                    displayQueue = updated
+                                                                }
                                                                 viewModel.moveQueueItem(from, to)
                                                             }
                                                             draggedIndex = null
@@ -2596,6 +2628,12 @@ fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
                                                             val from = draggedIndex
                                                             val to = currentTargetIndexRef.value
                                                             if (from != null && to != null && from != to) {
+                                                                val updated = displayQueue.toMutableList()
+                                                                if (from in updated.indices && to in updated.indices) {
+                                                                    val itemToMove = updated.removeAt(from)
+                                                                    updated.add(to, itemToMove)
+                                                                    displayQueue = updated
+                                                                }
                                                                 viewModel.moveQueueItem(from, to)
                                                             }
                                                             draggedIndex = null
@@ -2687,6 +2725,12 @@ fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
                                                 val from = draggedIndex
                                                 val to = currentTargetIndexRef.value
                                                 if (from != null && to != null && from != to) {
+                                                    val updated = displayQueue.toMutableList()
+                                                    if (from in updated.indices && to in updated.indices) {
+                                                        val itemToMove = updated.removeAt(from)
+                                                        updated.add(to, itemToMove)
+                                                        displayQueue = updated
+                                                    }
                                                     viewModel.moveQueueItem(from, to)
                                                 }
                                                 draggedIndex = null
@@ -2695,6 +2739,12 @@ fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
                                                 val from = draggedIndex
                                                 val to = currentTargetIndexRef.value
                                                 if (from != null && to != null && from != to) {
+                                                    val updated = displayQueue.toMutableList()
+                                                    if (from in updated.indices && to in updated.indices) {
+                                                        val itemToMove = updated.removeAt(from)
+                                                        updated.add(to, itemToMove)
+                                                        displayQueue = updated
+                                                    }
                                                     viewModel.moveQueueItem(from, to)
                                                 }
                                                 draggedIndex = null
@@ -2709,7 +2759,7 @@ fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
                         }
 
                         // Floating Overlay Card for Dragged Queue Song — matches regular card look
-                        val draggedSong = currentDraggedIndex?.let { queue.getOrNull(it) }
+                        val draggedSong = currentDraggedIndex?.let { displayQueue.getOrNull(it) }
                         val isActiveDragged = currentDraggedIndex == activeIndex
                         if (draggedSong != null) {
                             Box(
