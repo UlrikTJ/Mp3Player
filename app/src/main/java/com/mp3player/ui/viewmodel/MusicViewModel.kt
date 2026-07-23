@@ -137,8 +137,21 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val activeQueue: List<SongEntity> get() = _currentQueue.value
     val activeQueueIndex: Int get() = currentQueueIndex
 
+    private val failedArtworkSongIds = mutableSetOf<Int>()
+
     init {
         statsTracker.onSessionStarted()
+
+        // Periodic check for missing artworks
+        viewModelScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(30_000)
+                val hasMissingArtworks = allSongs.value.any { it.artworkPath.isNullOrBlank() && !failedArtworkSongIds.contains(it.id) }
+                if (hasMissingArtworks) {
+                    triggerAutoArtworkFetcher()
+                }
+            }
+        }
     }
 
     fun setPlayerManager(manager: CrossfadePlayerManager) {
@@ -826,14 +839,17 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             _isFetchingArtwork.value = true
             
             try {
-                val songsToFetch = allSongs.value.filter { it.artworkPath.isNullOrBlank() }
+                val songsToFetch = allSongs.value.filter { it.artworkPath.isNullOrBlank() && !failedArtworkSongIds.contains(it.id) }
                 for (song in songsToFetch) {
                     try {
                         val cleanTitle = song.title.replace(Regex("(?i)\\.(mp3|flac|wav|m4a)$"), "")
                             .replace(Regex("^[0-9]+\\s*[-._]?\\s*"), "").trim()
                         val cleanArtist = if (song.artist != "Unknown Artist" && song.artist != "Downloaded Track") song.artist else ""
                         val query = "$cleanTitle $cleanArtist".trim()
-                        if (query.length < 2) continue
+                        if (query.length < 2) {
+                            failedArtworkSongIds.add(song.id)
+                            continue
+                        }
                         
                         val results = service.search(query)
                         if (results.isNotEmpty()) {
@@ -841,11 +857,16 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                             if (bestMatch.thumbnail.isNotEmpty()) {
                                 val updatedSong = song.copy(artworkPath = bestMatch.thumbnail)
                                 musicDao.updateSong(updatedSong)
+                            } else {
+                                failedArtworkSongIds.add(song.id)
                             }
+                        } else {
+                            failedArtworkSongIds.add(song.id)
                         }
                         Thread.sleep(800)
                     } catch (e: Exception) {
                         e.printStackTrace()
+                        failedArtworkSongIds.add(song.id)
                     }
                 }
             } finally {
