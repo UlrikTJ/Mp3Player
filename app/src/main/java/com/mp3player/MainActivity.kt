@@ -146,6 +146,12 @@ class MainActivity : ComponentActivity() {
             boundService.onTrackEndedListener = {
                 viewModel.onTrackEndedEvent()
             }
+            boundService.onSkipPreviousListener = {
+                viewModel.playPreviousSong()
+            }
+            boundService.onToggleShuffleListener = {
+                viewModel.toggleShuffleMode()
+            }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -196,6 +202,12 @@ fun AppTheme(content: @Composable () -> Unit) {
 @Composable
 fun MainScreen(viewModel: MusicViewModel) {
     var selectedTab by remember { mutableIntStateOf(0) }
+    val activePlaylistId by viewModel.selectedPlaylistId.collectAsState()
+    val allPlaylists by viewModel.allPlaylists.collectAsState()
+    val activePlaylist = remember(activePlaylistId, allPlaylists) {
+        allPlaylists.firstOrNull { it.id == activePlaylistId }
+    }
+    
     val playerManager by viewModel.playerManager.collectAsState()
     val currentSong = playerManager?.currentPlayingSong?.collectAsState(null)?.value
 
@@ -215,26 +227,37 @@ fun MainScreen(viewModel: MusicViewModel) {
                     NavigationBarItem(
                         icon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = "Library") },
                         label = { Text("Library") },
-                        selected = selectedTab == 0,
-                        onClick = { selectedTab = 0 }
+                        selected = selectedTab == 0 && activePlaylist == null,
+                        onClick = { 
+                            selectedTab = 0 
+                            viewModel.selectPlaylist(null)
+                        }
                     )
                     NavigationBarItem(
                         icon = { Icon(Icons.Default.Search, contentDescription = "Search") },
                         label = { Text("Search") },
-                        selected = selectedTab == 1,
-                        onClick = { selectedTab = 1 }
+                        selected = selectedTab == 1 && activePlaylist == null,
+                        onClick = { 
+                            selectedTab = 1 
+                            viewModel.selectPlaylist(null)
+                        }
                     )
                     NavigationBarItem(
                         icon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = "Playlists") },
                         label = { Text("Playlists") },
-                        selected = selectedTab == 2,
-                        onClick = { selectedTab = 2 }
+                        selected = selectedTab == 2 || activePlaylist != null,
+                        onClick = { 
+                            selectedTab = 2 
+                        }
                     )
                     NavigationBarItem(
                         icon = { Icon(Icons.Default.Settings, contentDescription = "Settings") },
                         label = { Text("Settings") },
-                        selected = selectedTab == 3,
-                        onClick = { selectedTab = 3 }
+                        selected = selectedTab == 3 && activePlaylist == null,
+                        onClick = { 
+                            selectedTab = 3 
+                            viewModel.selectPlaylist(null)
+                        }
                     )
                 }
             }
@@ -246,11 +269,19 @@ fun MainScreen(viewModel: MusicViewModel) {
                 .background(MaterialTheme.colorScheme.background)
                 .padding(paddingValues)
         ) {
-            when (selectedTab) {
-                0 -> LibraryScreen(viewModel)
-                1 -> SearchScreen(viewModel)
-                2 -> PlaylistsScreen(viewModel)
-                3 -> SettingsScreen(viewModel)
+            if (activePlaylist != null) {
+                PlaylistDetailView(
+                    playlist = activePlaylist,
+                    viewModel = viewModel,
+                    onBack = { viewModel.selectPlaylist(null) }
+                )
+            } else {
+                when (selectedTab) {
+                    0 -> LibraryScreen(viewModel)
+                    1 -> SearchScreen(viewModel)
+                    2 -> PlaylistsScreen(viewModel)
+                    3 -> SettingsScreen(viewModel)
+                }
             }
         }
     }
@@ -353,69 +384,137 @@ fun LibraryScreen(viewModel: MusicViewModel) {
     val songs by viewModel.allSongs.collectAsState()
     val viewMode by viewModel.libraryViewMode.collectAsState()
     var expandedFolder by remember { mutableStateOf<String?>(null) }
-    
-    val folders = remember(songs) {
-        songs.groupBy { 
+    var filterQuery by remember { mutableStateOf("") }
+
+    val filteredSongs = remember(songs, filterQuery) {
+        if (filterQuery.isBlank()) songs
+        else songs.filter {
+            it.title.contains(filterQuery, ignoreCase = true) ||
+            it.artist.contains(filterQuery, ignoreCase = true)
+        }
+    }
+
+    val folders = remember(filteredSongs) {
+        filteredSongs.groupBy { 
             val parent = File(it.filePath).parentFile?.name
             if (parent.isNullOrEmpty() || parent == "Music" || parent == "mp3player_downloads") "Downloads" else parent
         }
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        // Header Row
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("My Library", style = MaterialTheme.typography.headlineMedium, color = Color.White)
-            Row {
+            Column {
+                Text(
+                    "My Library", 
+                    style = MaterialTheme.typography.headlineMedium, 
+                    color = Color.White,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                )
+                Text(
+                    "${songs.size} tracks available", 
+                    style = MaterialTheme.typography.bodySmall, 
+                    color = Color.Gray
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (songs.isNotEmpty()) {
+                    IconButton(
+                        onClick = { viewModel.playAllShuffled() },
+                        modifier = Modifier.background(MaterialTheme.colorScheme.primary, shape = RoundedCornerShape(12.dp))
+                    ) {
+                        Icon(Icons.Default.Shuffle, contentDescription = "Shuffle All", tint = Color.Black)
+                    }
+                }
                 val context = LocalContext.current
                 val activity = context as? MainActivity
-                IconButton(onClick = { activity?.checkAndRequestScanPermission() }) {
+                IconButton(
+                    onClick = { activity?.checkAndRequestScanPermission() },
+                    modifier = Modifier.background(MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(12.dp))
+                ) {
                     Icon(Icons.Default.Search, contentDescription = "Scan Storage", tint = MaterialTheme.colorScheme.primary)
                 }
             }
         }
         
-        // Tab Selection Row
-        Row(modifier = Modifier.fillMaxWidth()) {
-            TabRowDefaults.SecondaryIndicator(
-                modifier = Modifier.weight(1f)
-            )
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Search Filter TextField
+        OutlinedTextField(
+            value = filterQuery,
+            onValueChange = { filterQuery = it },
+            placeholder = { Text("Filter track or artist...", color = Color.Gray) },
+            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = Color.Gray) },
+            trailingIcon = {
+                if (filterQuery.isNotEmpty()) {
+                    IconButton(onClick = { filterQuery = "" }) {
+                        Icon(Icons.Default.Close, contentDescription = "Clear", tint = Color.Gray)
+                    }
+                }
+            },
+            singleLine = true,
+            shape = RoundedCornerShape(12.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedContainerColor = MaterialTheme.colorScheme.surface,
+                unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                unfocusedBorderColor = Color.Transparent
+            ),
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Tab Selection Pill Row
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(MaterialTheme.colorScheme.surface)
+                .padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
             Button(
                 onClick = { viewModel.updateLibraryViewMode("ALL"); expandedFolder = null },
                 colors = ButtonDefaults.buttonColors(
                     containerColor = if (viewMode == "ALL") MaterialTheme.colorScheme.primary else Color.Transparent,
-                    contentColor = if (viewMode == "ALL") Color.Black else MaterialTheme.colorScheme.primary
+                    contentColor = if (viewMode == "ALL") Color.Black else Color.Gray
                 ),
-                border = if (viewMode == "ALL") null else BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
-                modifier = Modifier.weight(1f).padding(end = 4.dp)
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.weight(1f)
             ) {
-                Text("All Songs")
+                Text("All Tracks", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
             }
             Button(
                 onClick = { viewModel.updateLibraryViewMode("FOLDERS") },
                 colors = ButtonDefaults.buttonColors(
                     containerColor = if (viewMode == "FOLDERS") MaterialTheme.colorScheme.primary else Color.Transparent,
-                    contentColor = if (viewMode == "FOLDERS") Color.Black else MaterialTheme.colorScheme.primary
+                    contentColor = if (viewMode == "FOLDERS") Color.Black else Color.Gray
                 ),
-                border = if (viewMode == "FOLDERS") null else BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
-                modifier = Modifier.weight(1f).padding(start = 4.dp)
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.weight(1f)
             ) {
-                Text("Folders")
+                Text("Folders", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
             }
         }
 
         Spacer(modifier = Modifier.height(16.dp))
         
-        if (songs.isEmpty()) {
+        if (filteredSongs.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("No music saved yet. Search and download tracks!", color = Color.Gray)
+                Text(
+                    if (filterQuery.isBlank()) "No music saved yet. Scan storage or download tracks!" else "No songs match '${filterQuery}'", 
+                    color = Color.Gray
+                )
             }
         } else {
             if (viewMode == "ALL") {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(songs) { song ->
+                    items(filteredSongs) { song ->
                         SongRow(song = song, viewModel = viewModel)
                     }
                 }
@@ -427,6 +526,7 @@ fun LibraryScreen(viewModel: MusicViewModel) {
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable { expandedFolder = folderName },
+                                shape = RoundedCornerShape(12.dp),
                                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
                             ) {
                                 Row(
@@ -435,9 +535,9 @@ fun LibraryScreen(viewModel: MusicViewModel) {
                                 ) {
                                     Icon(Icons.Default.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(32.dp))
                                     Spacer(modifier = Modifier.width(16.dp))
-                                    Column {
-                                        Text(folderName, color = Color.White, fontSize = 16.sp)
-                                        Text("${folders[folderName]?.size ?: 0} songs", color = Color.Gray, fontSize = 14.sp)
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(folderName, color = Color.White, fontSize = 16.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+                                        Text("${folders[folderName]?.size ?: 0} songs", color = Color.Gray, fontSize = 13.sp)
                                     }
                                 }
                             }
@@ -450,7 +550,7 @@ fun LibraryScreen(viewModel: MusicViewModel) {
                     ) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Back to Folders (${expandedFolder})", color = Color.White, fontSize = 16.sp)
+                        Text("Back to Folders (${expandedFolder})", color = Color.White, fontSize = 16.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -791,14 +891,77 @@ fun SearchScreen(viewModel: MusicViewModel) {
     }
 }
 
+@Composable
+fun PlaylistCollageCover(
+    songs: List<SongEntity>,
+    modifier: Modifier = Modifier
+) {
+    val artworkPaths = remember(songs) {
+        songs.mapNotNull { it.artworkPath }.filter { it.isNotBlank() }
+    }
+
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(
+                Brush.linearGradient(
+                    listOf(MaterialTheme.colorScheme.primary.copy(alpha = 0.25f), MaterialTheme.colorScheme.surface)
+                )
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        if (artworkPaths.isEmpty()) {
+            Icon(
+                Icons.AutoMirrored.Filled.PlaylistPlay,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(36.dp)
+            )
+        } else {
+            val gridArtworks = remember(artworkPaths) {
+                List(9) { index -> artworkPaths[index % artworkPaths.size] }
+            }
+
+            Column(modifier = Modifier.fillMaxSize()) {
+                for (row in 0..2) {
+                    Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                        for (col in 0..2) {
+                            val artPath = gridArtworks[row * 3 + col]
+                            AsyncImage(
+                                model = artPath,
+                                contentDescription = null,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxHeight(),
+                                contentScale = ContentScale.Crop
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun PlaylistCardCover(
+    playlistId: Int,
+    viewModel: MusicViewModel,
+    modifier: Modifier = Modifier
+) {
+    val songs by remember(playlistId) {
+        viewModel.getSongsForPlaylistFlow(playlistId)
+    }.collectAsState(initial = emptyList())
+
+    PlaylistCollageCover(songs = songs, modifier = modifier)
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PlaylistsScreen(viewModel: MusicViewModel) {
     val playlists by viewModel.allPlaylists.collectAsState()
     var showCreateDialog by remember { mutableStateOf(false) }
     var playlistNameInput by remember { mutableStateOf("") }
-    
-    var activePlaylist by remember { mutableStateOf<com.mp3player.data.entity.PlaylistEntity?>(null) }
     var playlistToDelete by remember { mutableStateOf<com.mp3player.data.entity.PlaylistEntity?>(null) }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
@@ -841,32 +1004,19 @@ fun PlaylistsScreen(viewModel: MusicViewModel) {
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable { 
-                                activePlaylist = playlist
                                 viewModel.selectPlaylist(playlist.id)
                             },
                         shape = RoundedCornerShape(16.dp),
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
-                            Box(
+                            PlaylistCardCover(
+                                playlistId = playlist.id,
+                                viewModel = viewModel,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .aspectRatio(1f)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(
-                                        Brush.linearGradient(
-                                            listOf(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f), MaterialTheme.colorScheme.primary)
-                                        )
-                                    ),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    Icons.AutoMirrored.Filled.PlaylistPlay, 
-                                    contentDescription = null, 
-                                    tint = Color.Black, 
-                                    modifier = Modifier.size(48.dp)
-                                )
-                            }
+                            )
                             
                             Spacer(modifier = Modifier.height(12.dp))
                             
@@ -952,25 +1102,14 @@ fun PlaylistsScreen(viewModel: MusicViewModel) {
             }
         )
     }
-
-    activePlaylist?.let { playlist ->
-        PlaylistDetailDialog(
-            playlist = playlist,
-            viewModel = viewModel,
-            onDismiss = { 
-                activePlaylist = null
-                viewModel.selectPlaylist(null)
-            }
-        )
-    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PlaylistDetailDialog(
+fun PlaylistDetailView(
     playlist: com.mp3player.data.entity.PlaylistEntity,
     viewModel: MusicViewModel,
-    onDismiss: () -> Unit
+    onBack: () -> Unit
 ) {
     val songs by viewModel.playlistSongs.collectAsState()
     val addSongsList by viewModel.songsNotInPlaylist.collectAsState()
@@ -1018,26 +1157,22 @@ fun PlaylistDetailDialog(
         }
     }
 
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background
     ) {
-        Surface(
-            modifier = Modifier.fillMaxSize(),
-            color = MaterialTheme.colorScheme.background
-        ) {
-            Column(modifier = Modifier.fillMaxSize()) {
-                // Top Action Bar with sticky Play/Pause button
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    IconButton(onClick = onDismiss) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
-                    }
+        Column(modifier = Modifier.fillMaxSize()) {
+            // Top Action Bar with sticky Play/Pause button
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
+                }
                     if (playlistListState.firstVisibleItemIndex > 0) {
                         Text(
                             playlist.name,
@@ -1112,36 +1247,10 @@ fun PlaylistDetailDialog(
                                     modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    val firstSongArt = songs.firstOrNull { it.artworkPath != null }?.artworkPath
-                                    if (firstSongArt != null) {
-                                        AsyncImage(
-                                            model = firstSongArt,
-                                            contentDescription = "Playlist Cover",
-                                            modifier = Modifier
-                                                .size(90.dp)
-                                                .clip(RoundedCornerShape(12.dp)),
-                                            contentScale = ContentScale.Crop
-                                        )
-                                    } else {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(90.dp)
-                                                .clip(RoundedCornerShape(12.dp))
-                                                .background(
-                                                    Brush.linearGradient(
-                                                        listOf(MaterialTheme.colorScheme.primary.copy(alpha = 0.2f), MaterialTheme.colorScheme.primary)
-                                                    )
-                                                ),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(
-                                                Icons.AutoMirrored.Filled.PlaylistPlay, 
-                                                contentDescription = null, 
-                                                tint = Color.Black, 
-                                                modifier = Modifier.size(36.dp)
-                                            )
-                                        }
-                                    }
+                                    PlaylistCollageCover(
+                                        songs = songs,
+                                        modifier = Modifier.size(90.dp)
+                                    )
 
                                     Spacer(modifier = Modifier.width(16.dp))
 
@@ -1493,174 +1602,171 @@ fun PlaylistDetailDialog(
                 if (activeSong != null) {
                     Spacer(modifier = Modifier.height(8.dp))
                     MiniPlayer(song = activeSong, viewModel = viewModel)
-                }
-            }
-        }
-    }
-
-    songToRemove?.let { songToDelete ->
-        AlertDialog(
-            onDismissRequest = { songToRemove = null },
-            title = { Text("Remove Song") },
-            text = { Text("Are you sure you want to remove '${songToDelete.title}' from this playlist?") },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        viewModel.removeSongFromPlaylist(playlist.id, songToDelete.id)
-                        songToRemove = null
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB71C1C))
-                ) { Text("Remove", color = Color.White) }
-            },
-            dismissButton = {
-                TextButton(onClick = { songToRemove = null }) { Text("Cancel") }
-            }
-        )
-    }
-
-    showWeightEditDialog?.let { song ->
-        var weightInput by remember { mutableFloatStateOf(song.baseWeight) }
-        AlertDialog(
-            onDismissRequest = { showWeightEditDialog = null },
-            title = { Text("Edit Song Weight") },
-            text = {
-                Column {
-                    Text("Song: ${song.title}", color = Color.White, style = MaterialTheme.typography.bodyMedium)
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text("Weight Multiplier: %.2fx".format(Locale.US, weightInput), color = Color.LightGray)
-                    Slider(
-                        value = weightInput,
-                        onValueChange = { weightInput = it },
-                        valueRange = 0.1f..5.0f
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        viewModel.updateSongWeight(song.id, weightInput)
-                        showWeightEditDialog = null
-                    }
-                ) { Text("Save") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showWeightEditDialog = null }) { Text("Cancel") }
-            }
-        )
-    }
-
-    if (showRenameDialog) {
-        var newNameInput by remember { mutableStateOf(playlist.name) }
-        AlertDialog(
-            onDismissRequest = { showRenameDialog = false },
-            title = { Text("Rename Playlist") },
-            text = {
-                OutlinedTextField(
-                    value = newNameInput,
-                    onValueChange = { newNameInput = it },
-                    label = { Text("New Name") },
-                    singleLine = true
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        if (newNameInput.isNotBlank()) {
-                            viewModel.renamePlaylist(playlist.id, newNameInput)
-                            showRenameDialog = false
-                        }
-                    }
-                ) { Text("Save") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showRenameDialog = false }) { Text("Cancel") }
-            }
-        )
-    }
-
-
-    if (showAddSongsDialog) {
-        var addSearchQuery by remember { mutableStateOf("") }
-        val filteredAddSongs = remember(addSongsList, addSearchQuery) {
-            addSongsList.filter {
-                it.title.contains(addSearchQuery, ignoreCase = true) ||
-                it.artist.contains(addSearchQuery, ignoreCase = true)
-            }
+                }            }
         }
 
-        Dialog(
-            onDismissRequest = { showAddSongsDialog = false },
-            properties = DialogProperties(usePlatformDefaultWidth = false)
-        ) {
-            Surface(
-                modifier = Modifier.fillMaxSize(),
-                color = MaterialTheme.colorScheme.background
-            ) {
-                Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Add Songs to Playlist", style = MaterialTheme.typography.titleLarge, color = Color.White, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
-                        IconButton(onClick = { showAddSongsDialog = false }) {
-                            Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(16.dp))
-                    
-                    OutlinedTextField(
-                        value = addSearchQuery,
-                        onValueChange = { addSearchQuery = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        placeholder = { Text("Search library songs...") },
-                        singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = MaterialTheme.colorScheme.primary,
-                            focusedLabelColor = MaterialTheme.colorScheme.primary
+        songToRemove?.let { songToDelete ->
+            AlertDialog(
+                onDismissRequest = { songToRemove = null },
+                title = { Text("Remove Song") },
+                text = { Text("Are you sure you want to remove '${songToDelete.title}' from this playlist?") },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            viewModel.removeSongFromPlaylist(playlist.id, songToDelete.id)
+                            songToRemove = null
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB71C1C))
+                    ) { Text("Remove", color = Color.White) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { songToRemove = null }) { Text("Cancel") }
+                }
+            )
+        }
+
+        showWeightEditDialog?.let { song ->
+            var weightInput by remember { mutableFloatStateOf(song.baseWeight) }
+            AlertDialog(
+                onDismissRequest = { showWeightEditDialog = null },
+                title = { Text("Edit Song Weight") },
+                text = {
+                    Column {
+                        Text("Song: ${song.title}", color = Color.White, style = MaterialTheme.typography.bodyMedium)
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text("Weight Multiplier: %.2fx".format(Locale.US, weightInput), color = Color.LightGray)
+                        Slider(
+                            value = weightInput,
+                            onValueChange = { weightInput = it },
+                            valueRange = 0.1f..5.0f
                         )
-                    )
-                    
-                    Spacer(modifier = Modifier.height(16.dp))
-                    
-                    if (filteredAddSongs.isEmpty()) {
-                        Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                            Text("No matching songs found.", color = Color.Gray)
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            viewModel.updateSongWeight(song.id, weightInput)
+                            showWeightEditDialog = null
                         }
-                    } else {
-                        LazyColumn(
-                            modifier = Modifier.weight(1f),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) { Text("Save") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showWeightEditDialog = null }) { Text("Cancel") }
+                }
+            )
+        }
+
+        if (showRenameDialog) {
+            var newNameInput by remember { mutableStateOf(playlist.name) }
+            AlertDialog(
+                onDismissRequest = { showRenameDialog = false },
+                title = { Text("Rename Playlist") },
+                text = {
+                    OutlinedTextField(
+                        value = newNameInput,
+                        onValueChange = { newNameInput = it },
+                        label = { Text("New Name") },
+                        singleLine = true
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            if (newNameInput.isNotBlank()) {
+                                viewModel.renamePlaylist(playlist.id, newNameInput)
+                                showRenameDialog = false
+                            }
+                        }
+                    ) { Text("Save") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showRenameDialog = false }) { Text("Cancel") }
+                }
+            )
+        }
+
+        if (showAddSongsDialog) {
+            var addSearchQuery by remember { mutableStateOf("") }
+            val filteredAddSongs = remember(addSongsList, addSearchQuery) {
+                addSongsList.filter {
+                    it.title.contains(addSearchQuery, ignoreCase = true) ||
+                    it.artist.contains(addSearchQuery, ignoreCase = true)
+                }
+            }
+
+            Dialog(
+                onDismissRequest = { showAddSongsDialog = false },
+                properties = DialogProperties(usePlatformDefaultWidth = false)
+            ) {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            items(filteredAddSongs) { song ->
-                                Card(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable { viewModel.addSongToPlaylist(playlist.id, song.id) },
-                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-                                ) {
-                                    Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                                        Text(song.title, color = Color.White, fontSize = 14.sp, modifier = Modifier.weight(1f))
-                                        Icon(Icons.Default.Add, contentDescription = "Add", tint = MaterialTheme.colorScheme.primary)
+                            Text("Add Songs to Playlist", style = MaterialTheme.typography.titleLarge, color = Color.White, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                            IconButton(onClick = { showAddSongsDialog = false }) {
+                                Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(16.dp))
+                        
+                        OutlinedTextField(
+                            value = addSearchQuery,
+                            onValueChange = { addSearchQuery = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            placeholder = { Text("Search library songs...") },
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                focusedLabelColor = MaterialTheme.colorScheme.primary
+                            )
+                        )
+                        
+                        Spacer(modifier = Modifier.height(16.dp))
+                        
+                        if (filteredAddSongs.isEmpty()) {
+                            Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                                Text("No matching songs found.", color = Color.Gray)
+                            }
+                        } else {
+                            LazyColumn(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                items(filteredAddSongs) { song ->
+                                    Card(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable { viewModel.addSongToPlaylist(playlist.id, song.id) },
+                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                                    ) {
+                                        Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                                            Text(song.title, color = Color.White, fontSize = 14.sp, modifier = Modifier.weight(1f))
+                                            Icon(Icons.Default.Add, contentDescription = "Add", tint = MaterialTheme.colorScheme.primary)
+                                        }
                                     }
                                 }
-                             }
+                            }
                         }
                     }
                 }
             }
         }
-    }
 
-    if (showStatsDialog) {
-        PlaylistStatsDialog(
-            playlistName = playlist.name,
-            playlistId = playlist.id,
-            viewModel = viewModel,
-            onDismiss = { showStatsDialog = false }
-        )
+        if (showStatsDialog) {
+            PlaylistStatsDialog(
+                playlistName = playlist.name,
+                playlistId = playlist.id,
+                viewModel = viewModel,
+                onDismiss = { showStatsDialog = false }
+            )
+        }
     }
-}
 
 @Composable
 fun PlaylistStatsDialog(
@@ -2439,7 +2545,7 @@ fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .clickable { viewModel.playQueueSongAt(index) }
-                                            .padding(12.dp),
+                                            .padding(8.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Icon(
@@ -2480,17 +2586,69 @@ fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
                                                     )
                                                 }
                                         )
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Text(
-                                            text = "${index + 1}. ${song.title}",
-                                            color = if (isActive) MaterialTheme.colorScheme.primary else Color.White,
-                                            fontSize = 14.sp,
-                                            fontWeight = if (isActive) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal,
-                                            modifier = Modifier.weight(1f),
-                                            maxLines = 1
-                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+
+                                        if (song.artworkPath != null) {
+                                            AsyncImage(
+                                                model = song.artworkPath,
+                                                contentDescription = "Album Art",
+                                                modifier = Modifier
+                                                    .size(48.dp)
+                                                    .clip(RoundedCornerShape(8.dp)),
+                                                contentScale = ContentScale.Crop
+                                            )
+                                        } else {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(48.dp)
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .background(Color.DarkGray),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.LightGray)
+                                            }
+                                        }
+
+                                        Spacer(modifier = Modifier.width(12.dp))
+
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = song.title,
+                                                color = if (isActive) MaterialTheme.colorScheme.primary else Color.White,
+                                                fontSize = 14.sp,
+                                                fontWeight = if (isActive) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.SemiBold,
+                                                maxLines = 1
+                                            )
+                                            Text(
+                                                text = song.artist,
+                                                color = Color.Gray,
+                                                fontSize = 12.sp,
+                                                maxLines = 1
+                                            )
+                                        }
+
                                         if (isActive) {
                                             Text("Playing", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                        }
+
+                                        var queueMenuExpanded by remember { mutableStateOf(false) }
+                                        Box {
+                                            IconButton(onClick = { queueMenuExpanded = true }) {
+                                                Icon(Icons.Default.MoreVert, contentDescription = "Options", tint = Color.LightGray)
+                                            }
+                                            DropdownMenu(
+                                                expanded = queueMenuExpanded,
+                                                onDismissRequest = { queueMenuExpanded = false }
+                                            ) {
+                                                DropdownMenuItem(
+                                                    text = { Text("Remove from Queue") },
+                                                    onClick = {
+                                                        viewModel.removeFromQueueAt(index)
+                                                        queueMenuExpanded = false
+                                                    }
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -2559,7 +2717,7 @@ fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .padding(12.dp),
+                                            .padding(8.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Icon(
@@ -2568,15 +2726,43 @@ fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
                                             tint = MaterialTheme.colorScheme.primary,
                                             modifier = Modifier.size(36.dp).padding(4.dp)
                                         )
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Text(
-                                            text = "${(currentDraggedIndex ?: 0) + 1}. ${draggedSong.title}",
-                                            color = if (isActiveDragged) MaterialTheme.colorScheme.primary else Color.White,
-                                            fontSize = 14.sp,
-                                            fontWeight = if (isActiveDragged) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal,
-                                            modifier = Modifier.weight(1f),
-                                            maxLines = 1
-                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        if (draggedSong.artworkPath != null) {
+                                            AsyncImage(
+                                                model = draggedSong.artworkPath,
+                                                contentDescription = "Album Art",
+                                                modifier = Modifier
+                                                    .size(48.dp)
+                                                    .clip(RoundedCornerShape(8.dp)),
+                                                contentScale = ContentScale.Crop
+                                            )
+                                        } else {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(48.dp)
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .background(Color.DarkGray),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.LightGray)
+                                            }
+                                        }
+                                        Spacer(modifier = Modifier.width(12.dp))
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = draggedSong.title,
+                                                color = if (isActiveDragged) MaterialTheme.colorScheme.primary else Color.White,
+                                                fontSize = 14.sp,
+                                                fontWeight = if (isActiveDragged) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.SemiBold,
+                                                maxLines = 1
+                                            )
+                                            Text(
+                                                text = draggedSong.artist,
+                                                color = Color.Gray,
+                                                fontSize = 12.sp,
+                                                maxLines = 1
+                                            )
+                                        }
                                         if (isActiveDragged) {
                                             Text("Playing", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
                                         }

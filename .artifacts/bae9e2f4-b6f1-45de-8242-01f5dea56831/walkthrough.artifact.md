@@ -1,30 +1,30 @@
-# Walkthrough - Fixing Invalid URL Crash
+# Walkthrough - Fixing Fatal Crashes and Improving Thread Safety
 
-I have fixed the crash that occurred when the application was initialized with an invalid or empty server IP address.
+I have resolved several potential causes for the fatal crashes you were experiencing, particularly focusing on thread safety in the playback logic and compatibility with modern Android foreground service requirements.
 
 ## Changes Made
 
-### Data Layer
+### 1. Thread-Safe Playback Lists
+- **MusicViewModel.kt**: Refactored `currentQueue`, `playbackHistory`, and `playedSongIds` from `MutableList` to `MutableStateFlow`.
+- **Why?**: In a music player, the queue is often modified (by the user reordering) and read (by the background service advancing tracks) simultaneously. Using `MutableList` in this way frequently causes `ConcurrentModificationException`. By using `StateFlow` and replacing the entire list instance on each update, we ensure all operations are thread-safe and reactive.
 
-#### [ApiService.kt](file:///C:/Users/Ulrik/Documents/Projects/Mp3Player/app/src/main/java/com/mp3player/data/network/ApiService.kt)
-- Updated `getInstance` to return `ApiService?` (nullable).
-- Added basic URL validation: checks if the URL is blank or doesn't start with `http`.
-- Added a `try-catch` block around `Retrofit.Builder().baseUrl()` to catch `IllegalArgumentException` from invalid hostnames.
-- Improved the singleton pattern to track the `currentBaseUrl` and avoid unnecessary re-initialization if the URL hasn't changed.
+### 2. Notification Permissions (Android 13+)
+- **MainActivity.kt**: Added logic to request the `POST_NOTIFICATIONS` permission.
+- **Why?**: On Android 13 and above, an app cannot show notifications (including the playback controls) without explicit user permission. If a foreground service tries to start without this permission, the system can kill the process.
 
-### UI Layer
-
-#### [MusicViewModel.kt](file:///C:/Users/Ulrik/Documents/Projects/Mp3Player/app/src/main/java/com/mp3player/ui/viewmodel/MusicViewModel.kt)
-- Updated `apiService` to be nullable.
-- Added a null check (`apiService ?: return@launch`) in all network-related functions (`searchYouTube`, `streamYouTubeTrack`, `downloadYouTubeTrack`) to prevent calls when the service isn't initialized.
-- Added validation in `updateServerIp` to ignore blank IP inputs.
-- Ensured that a new `apiService` is only assigned if initialization is successful.
+### 3. Foreground Service Startup Safety
+- **AudioService.kt**: Added a placeholder "Initializing..." notification that is shown immediately in `onCreate`.
+- **Why?**: Android 12+ requires a foreground service to call `startForeground` within 5 seconds of being started. If the player logic takes too long to load the first song, the app would crash. This change ensures the requirement is always met.
+- **Modern API Compatibility**: Updated `startForeground` to explicitly include the `mediaPlayback` service type, which is required for API level 34+.
 
 ## Verification Results
 
-### Build Status
-- [x] `gradle_build` (app:assembleDebug) passed successfully.
+### Build Success
+The project now synchronizes and builds successfully:
+- `gradle_build`: **Succeeded**
 
-### Manual Verification Recommended
-- Launch the app with an empty server IP in settings. It should no longer crash.
-- Enter a valid IP and verify that Search and Playback functions (streaming/downloading) work as expected.
+> [!TIP]
+> When you first launch the app after this update, you should see a permission dialog for Notifications. Please **Allow** it to ensure the background playback works correctly.
+
+> [!IMPORTANT]
+> If you still experience a crash, please try to provide the Logcat output from the "Logcat" tab in Android Studio, as it will contain the specific stack trace needed for further diagnosis.

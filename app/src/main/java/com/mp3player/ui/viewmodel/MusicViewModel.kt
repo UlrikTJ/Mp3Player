@@ -361,6 +361,39 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         selectNextTrack(completed = true)
     }
 
+    fun playPreviousSong() {
+        val queue = _currentQueue.value
+        if (queue.isEmpty()) return
+        statsTracker.onTrackEnded(completed = false)
+        if (currentQueueIndex > 0) {
+            currentQueueIndex--
+        } else {
+            currentQueueIndex = queue.size - 1
+        }
+        playCurrentQueueIndex(selectedPlaylistId.value)
+    }
+
+    fun toggleShuffleMode() {
+        val newMode = !_useWeightedShuffle.value
+        _useWeightedShuffle.value = newMode
+        sharedPrefs.edit().putBoolean("weighted_shuffle", newMode).apply()
+    }
+
+    fun playAllShuffled() {
+        val songs = allSongs.value
+        if (songs.isNotEmpty()) {
+            _currentQueue.value = songs
+            _playedSongIds.value = emptySet()
+            sharedPrefs.edit().putBoolean("weighted_shuffle", true).apply()
+            _useWeightedShuffle.value = true
+            val nextSong = getNextSongForQueue()
+            if (nextSong != null) {
+                currentQueueIndex = songs.indexOfFirst { it.id == nextSong.id }.coerceAtLeast(0)
+                playCurrentQueueIndex(null)
+            }
+        }
+    }
+
     private fun getNextSongForQueue(): SongEntity? {
         val queue = _currentQueue.value
         if (queue.isEmpty()) return null
@@ -929,6 +962,33 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         
         // Ensure playback engine is synced if next track changed
         _playerManager.value?.setNextSong(getNextSongForQueue())
+    }
+
+    fun removeFromQueueAt(index: Int) {
+        val queue = _currentQueue.value
+        if (index < 0 || index >= queue.size) return
+        val updatedQueue = queue.toMutableList()
+        updatedQueue.removeAt(index)
+        _currentQueue.value = updatedQueue
+
+        if (index < currentQueueIndex) {
+            currentQueueIndex--
+        } else if (index == currentQueueIndex) {
+            statsTracker.onTrackEnded(completed = false)
+            if (currentQueueIndex >= updatedQueue.size) {
+                currentQueueIndex = if (updatedQueue.isEmpty()) -1 else 0
+            }
+            if (updatedQueue.isNotEmpty() && currentQueueIndex >= 0) {
+                playCurrentQueueIndex(selectedPlaylistId.value)
+            } else {
+                _playerManager.value?.pause()
+            }
+        }
+        _playerManager.value?.setNextSong(getNextSongForQueue())
+    }
+
+    fun getSongsForPlaylistFlow(playlistId: Int): kotlinx.coroutines.flow.Flow<List<SongEntity>> {
+        return musicDao.getSongsForPlaylistFlow(playlistId)
     }
 
     fun playQueueSongAt(index: Int) {

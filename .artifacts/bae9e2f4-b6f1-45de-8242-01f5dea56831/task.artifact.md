@@ -1,4 +1,5 @@
-- [x] Update `libs.versions.toml` with Gson 2.11.0
-- [x] Add Gson dependency to `app/build.gradle.kts`
-- [x] Fix `fetchSearchSuggestions` in `MusicViewModel.kt`
-- [x] Run Gradle Sync and Build
+- [ ] Add atomic reorder methods to `MusicDao.kt`
+- [ ] Refactor `reorderSongInPlaylist` in `MusicViewModel.kt`
+- [ ] Stabilize drag gestures in `PlaylistDetailDialog` (`MainActivity.kt`)
+- [ ] Stabilize drag gestures in `QueueDialog` (`MainActivity.kt`)
+- [ ] Verify fix by building and testing drag-and-drop
