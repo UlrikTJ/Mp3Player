@@ -1242,23 +1242,13 @@ fun PlaylistDetailView(
                             if (songItems.isEmpty()) currentDraggedIndex
                             else {
                                 val cardCenterY = targetScreenY + (playlistItemHeightPx / 2f)
-                                val matchingItem = songItems.firstOrNull { item ->
+                                val closestItem = songItems.minByOrNull { item ->
                                     val itemCenter = item.offset + (item.size / 2f)
-                                    cardCenterY >= item.offset && cardCenterY <= (item.offset + item.size)
+                                    kotlin.math.abs(cardCenterY - itemCenter)
                                 }
-                                if (matchingItem != null) {
-                                    (matchingItem.index - 1).coerceIn(0, songs.size - 1)
-                                } else {
-                                    val firstItem = songItems.first()
-                                    val lastItem = songItems.last()
-                                    if (cardCenterY < firstItem.offset) {
-                                        (firstItem.index - 1).coerceIn(0, songs.size - 1)
-                                    } else if (cardCenterY > (lastItem.offset + lastItem.size)) {
-                                        (lastItem.index - 1).coerceIn(0, songs.size - 1)
-                                    } else {
-                                        currentDraggedIndex
-                                    }
-                                }
+                                if (closestItem != null) {
+                                    (closestItem.index - 1).coerceIn(0, songs.size - 1)
+                                } else currentDraggedIndex
                             }
                         }
                     }
@@ -2510,22 +2500,13 @@ fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
                             if (visibleItems.isEmpty()) currentDraggedIndex
                             else {
                                 val cardCenterY = targetScreenY + (itemHeightPx / 2f)
-                                val matchingItem = visibleItems.firstOrNull { item ->
-                                    cardCenterY >= item.offset && cardCenterY <= (item.offset + item.size)
+                                val closestItem = visibleItems.minByOrNull { item ->
+                                    val itemCenter = item.offset + (item.size / 2f)
+                                    kotlin.math.abs(cardCenterY - itemCenter)
                                 }
-                                if (matchingItem != null) {
-                                    matchingItem.index.coerceIn(0, queue.size - 1)
-                                } else {
-                                    val firstItem = visibleItems.first()
-                                    val lastItem = visibleItems.last()
-                                    if (cardCenterY < firstItem.offset) {
-                                        firstItem.index.coerceIn(0, queue.size - 1)
-                                    } else if (cardCenterY > (lastItem.offset + lastItem.size)) {
-                                        lastItem.index.coerceIn(0, queue.size - 1)
-                                    } else {
-                                        currentDraggedIndex
-                                    }
-                                }
+                                if (closestItem != null) {
+                                    closestItem.index.coerceIn(0, queue.size - 1)
+                                } else currentDraggedIndex
                             }
                         }
                     }
