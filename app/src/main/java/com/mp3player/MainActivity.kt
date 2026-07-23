@@ -1231,25 +1231,30 @@ fun PlaylistDetailView(
                 var currentTargetIndex by remember { mutableStateOf<Int?>(null) }
                 val currentTargetIndexRef = rememberUpdatedState(currentTargetIndex)
 
-                // Recalculate target index reactively whenever drag position or scroll changes
+                // Recalculate target index and reorder live during drag
                 LaunchedEffect(currentDraggedIndex, targetScreenY, playlistListState.firstVisibleItemIndex, playlistListState.firstVisibleItemScrollOffset) {
-                    currentTargetIndex = if (currentDraggedIndex == null) null
-                    else {
+                    if (currentDraggedIndex != null) {
                         val visibleItems = playlistListState.layoutInfo.visibleItemsInfo
-                        if (visibleItems.isEmpty()) currentDraggedIndex
-                        else {
-                            // Only consider song items (skip header at index 0)
-                            val songItems = visibleItems.filter { it.index > 0 }
-                            if (songItems.isEmpty()) currentDraggedIndex
-                            else {
-                                val cardCenterY = targetScreenY + (playlistItemHeightPx / 2f)
-                                val closestItem = songItems.minByOrNull { item ->
-                                    val itemCenter = item.offset + (item.size / 2f)
-                                    kotlin.math.abs(cardCenterY - itemCenter)
+                        val songItems = visibleItems.filter { it.index > 0 }
+                        if (songItems.isNotEmpty()) {
+                            val cardCenterY = targetScreenY + (playlistItemHeightPx / 2f)
+                            val closestItem = songItems.minByOrNull { item ->
+                                val itemCenter = item.offset + (item.size / 2f)
+                                kotlin.math.abs(cardCenterY - itemCenter)
+                            }
+                            if (closestItem != null) {
+                                val targetIdx = (closestItem.index - 1).coerceIn(0, displaySongs.size - 1)
+                                val fromIdx = currentDraggedIndex
+                                if (targetIdx != fromIdx) {
+                                    val updated = displaySongs.toMutableList()
+                                    if (fromIdx in updated.indices && targetIdx in updated.indices) {
+                                        val itemToMove = updated.removeAt(fromIdx)
+                                        updated.add(targetIdx, itemToMove)
+                                        displaySongs = updated
+                                        viewModel.reorderSongInPlaylist(playlist.id, fromIdx, targetIdx)
+                                        draggedIndex = targetIdx
+                                    }
                                 }
-                                if (closestItem != null) {
-                                    (closestItem.index - 1).coerceIn(0, songs.size - 1)
-                                } else currentDraggedIndex
                             }
                         }
                     }
@@ -1369,40 +1374,14 @@ fun PlaylistDetailView(
                         } else {
                             itemsIndexed(displaySongs, key = { _, song -> song.id }) { index, song ->
                                 val isDraggedItem = index == currentDraggedIndex
-                                
-                                val targetTranslationY = run {
-                                    val dragIdx = currentDraggedIndex
-                                    val targetIdx = currentTargetIndex
-                                    when {
-                                        dragIdx != null && targetIdx != null -> {
-                                            // Get actual item size from layout info
-                                            val actualItemSize = playlistListState.layoutInfo.visibleItemsInfo
-                                                .firstOrNull { it.index > 0 }?.size?.toFloat() ?: playlistItemHeightPx
-                                            val spacing = with(density) { 4.dp.toPx() }
-                                            val totalItemHeight = actualItemSize + spacing
-                                            if (dragIdx < targetIdx && index > dragIdx && index <= targetIdx) {
-                                                -totalItemHeight
-                                            } else if (dragIdx > targetIdx && index < dragIdx && index >= targetIdx) {
-                                                totalItemHeight
-                                            } else 0f
-                                        }
-                                        else -> 0f
-                                    }
-                                }
-                                
-                            val animatedY by animateFloatAsState(
-                                targetValue = targetTranslationY,
-                                animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-                                label = "playlistReorderTranslation"
-                            )
 
-                            Card(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .graphicsLayer {
-                                        translationY = animatedY
-                                        alpha = if (isDraggedItem) 0.25f else 1.0f
-                                    },
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .animateItem()
+                                        .graphicsLayer {
+                                            alpha = if (isDraggedItem) 0.25f else 1.0f
+                                        },
                                     elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
                                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
                                 ) {
@@ -1430,31 +1409,9 @@ fun PlaylistDetailView(
                                                                 targetScreenY = startY + touchOffset.y - (playlistItemHeightPx / 2f)
                                                             },
                                                             onDragEnd = {
-                                                                val from = draggedIndex
-                                                                val to = currentTargetIndexRef.value
-                                                                if (from != null && to != null && from != to) {
-                                                                    val updated = displaySongs.toMutableList()
-                                                                    if (from in updated.indices && to in updated.indices) {
-                                                                        val itemToMove = updated.removeAt(from)
-                                                                        updated.add(to, itemToMove)
-                                                                        displaySongs = updated
-                                                                    }
-                                                                    viewModel.reorderSongInPlaylist(playlist.id, from, to)
-                                                                }
                                                                 draggedIndex = null
                                                             },
                                                             onDragCancel = {
-                                                                val from = draggedIndex
-                                                                val to = currentTargetIndexRef.value
-                                                                if (from != null && to != null && from != to) {
-                                                                    val updated = displaySongs.toMutableList()
-                                                                    if (from in updated.indices && to in updated.indices) {
-                                                                        val itemToMove = updated.removeAt(from)
-                                                                        updated.add(to, itemToMove)
-                                                                        displaySongs = updated
-                                                                    }
-                                                                    viewModel.reorderSongInPlaylist(playlist.id, from, to)
-                                                                }
                                                                 draggedIndex = null
                                                             },
                                                             onDrag = { change, dragAmount ->
@@ -1546,31 +1503,9 @@ fun PlaylistDetailView(
                                 .pointerInput(Unit) {
                                     detectDragGestures(
                                         onDragEnd = {
-                                            val from = draggedIndex
-                                            val to = currentTargetIndexRef.value
-                                            if (from != null && to != null && from != to) {
-                                                val updated = displaySongs.toMutableList()
-                                                if (from in updated.indices && to in updated.indices) {
-                                                    val itemToMove = updated.removeAt(from)
-                                                    updated.add(to, itemToMove)
-                                                    displaySongs = updated
-                                                }
-                                                viewModel.reorderSongInPlaylist(playlist.id, from, to)
-                                            }
                                             draggedIndex = null
                                         },
                                         onDragCancel = {
-                                            val from = draggedIndex
-                                            val to = currentTargetIndexRef.value
-                                            if (from != null && to != null && from != to) {
-                                                val updated = displaySongs.toMutableList()
-                                                if (from in updated.indices && to in updated.indices) {
-                                                    val itemToMove = updated.removeAt(from)
-                                                    updated.add(to, itemToMove)
-                                                    displaySongs = updated
-                                                }
-                                                viewModel.reorderSongInPlaylist(playlist.id, from, to)
-                                            }
                                             draggedIndex = null
                                         },
                                         onDrag = { change, dragAmount ->
@@ -2518,21 +2453,30 @@ fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
                     var currentTargetIndex by remember { mutableStateOf<Int?>(null) }
                     val currentTargetIndexRef = rememberUpdatedState(currentTargetIndex)
 
-                    // Recalculate target index reactively whenever drag position or scroll changes
+                    // Recalculate target index and reorder live during drag
                     LaunchedEffect(currentDraggedIndex, targetScreenY, listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset) {
-                        currentTargetIndex = if (currentDraggedIndex == null) null
-                        else {
+                        if (currentDraggedIndex != null) {
                             val visibleItems = listState.layoutInfo.visibleItemsInfo
-                            if (visibleItems.isEmpty()) currentDraggedIndex
-                            else {
+                            if (visibleItems.isNotEmpty()) {
                                 val cardCenterY = targetScreenY + (itemHeightPx / 2f)
                                 val closestItem = visibleItems.minByOrNull { item ->
                                     val itemCenter = item.offset + (item.size / 2f)
                                     kotlin.math.abs(cardCenterY - itemCenter)
                                 }
                                 if (closestItem != null) {
-                                    closestItem.index.coerceIn(0, displayQueue.size - 1)
-                                } else currentDraggedIndex
+                                    val targetIdx = closestItem.index.coerceIn(0, displayQueue.size - 1)
+                                    val fromIdx = currentDraggedIndex
+                                    if (targetIdx != fromIdx) {
+                                        val updated = displayQueue.toMutableList()
+                                        if (fromIdx in updated.indices && targetIdx in updated.indices) {
+                                            val itemToMove = updated.removeAt(fromIdx)
+                                            updated.add(targetIdx, itemToMove)
+                                            displayQueue = updated
+                                            viewModel.moveQueueItem(fromIdx, targetIdx)
+                                            draggedIndex = targetIdx
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -2547,36 +2491,14 @@ fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
                             itemsIndexed(displayQueue, key = { _, song -> song.instanceId }) { index, song ->
                                 val isActive = index == activeIndex
                                 val isDraggedItem = index == currentDraggedIndex
-                                
-                                val targetTranslationY = run {
-                                    val dragIdx = currentDraggedIndex
-                                    val targetIdx = currentTargetIndex
-                                    when {
-                                        dragIdx != null && targetIdx != null -> {
-                                            if (dragIdx < targetIdx && index > dragIdx && index <= targetIdx) {
-                                                -itemHeightPx
-                                            } else if (dragIdx > targetIdx && index < dragIdx && index >= targetIdx) {
-                                                itemHeightPx
-                                            } else 0f
-                                        }
-                                        else -> 0f
-                                    }
-                                }
-                                
-                            val animatedY by animateFloatAsState(
-                                targetValue = targetTranslationY,
-                                animationSpec = if (currentDraggedIndex != null) spring(stiffness = Spring.StiffnessMediumLow) else snap(),
-                                label = "reorderTranslation"
-                            )
 
-                            Card(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .animateItem()
-                                    .graphicsLayer {
-                                        translationY = animatedY
-                                        alpha = if (isDraggedItem) 0.25f else 1.0f
-                                    },
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .animateItem()
+                                        .graphicsLayer {
+                                            alpha = if (isDraggedItem) 0.25f else 1.0f
+                                        },
                                     elevation = CardDefaults.cardElevation(
                                         defaultElevation = if (isActive) 2.dp else 0.dp
                                     ),
@@ -2611,31 +2533,9 @@ fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
                                                             targetScreenY = startY + touchOffset.y - (itemHeightPx / 2f)
                                                         },
                                                         onDragEnd = {
-                                                            val from = draggedIndex
-                                                            val to = currentTargetIndexRef.value
-                                                            if (from != null && to != null && from != to) {
-                                                                val updated = displayQueue.toMutableList()
-                                                                if (from in updated.indices && to in updated.indices) {
-                                                                    val itemToMove = updated.removeAt(from)
-                                                                    updated.add(to, itemToMove)
-                                                                    displayQueue = updated
-                                                                }
-                                                                viewModel.moveQueueItem(from, to)
-                                                            }
                                                             draggedIndex = null
                                                         },
                                                         onDragCancel = { 
-                                                            val from = draggedIndex
-                                                            val to = currentTargetIndexRef.value
-                                                            if (from != null && to != null && from != to) {
-                                                                val updated = displayQueue.toMutableList()
-                                                                if (from in updated.indices && to in updated.indices) {
-                                                                    val itemToMove = updated.removeAt(from)
-                                                                    updated.add(to, itemToMove)
-                                                                    displayQueue = updated
-                                                                }
-                                                                viewModel.moveQueueItem(from, to)
-                                                            }
                                                             draggedIndex = null
                                                         },
                                                         onDrag = { change, dragAmount ->
@@ -2722,31 +2622,9 @@ fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
                                     .pointerInput(Unit) {
                                         detectDragGestures(
                                             onDragEnd = {
-                                                val from = draggedIndex
-                                                val to = currentTargetIndexRef.value
-                                                if (from != null && to != null && from != to) {
-                                                    val updated = displayQueue.toMutableList()
-                                                    if (from in updated.indices && to in updated.indices) {
-                                                        val itemToMove = updated.removeAt(from)
-                                                        updated.add(to, itemToMove)
-                                                        displayQueue = updated
-                                                    }
-                                                    viewModel.moveQueueItem(from, to)
-                                                }
                                                 draggedIndex = null
                                             },
                                             onDragCancel = {
-                                                val from = draggedIndex
-                                                val to = currentTargetIndexRef.value
-                                                if (from != null && to != null && from != to) {
-                                                    val updated = displayQueue.toMutableList()
-                                                    if (from in updated.indices && to in updated.indices) {
-                                                        val itemToMove = updated.removeAt(from)
-                                                        updated.add(to, itemToMove)
-                                                        displayQueue = updated
-                                                    }
-                                                    viewModel.moveQueueItem(from, to)
-                                                }
                                                 draggedIndex = null
                                             },
                                             onDrag = { change, dragAmount ->
