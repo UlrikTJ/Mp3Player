@@ -1004,9 +1004,7 @@ fun PlaylistsScreen(viewModel: MusicViewModel) {
     val playlists by viewModel.allPlaylists.collectAsState()
     val importProgress by viewModel.importProgress.collectAsState()
 
-    val playerManager by viewModel.playerManager.collectAsState()
-    val currentSong = playerManager?.currentPlayingSong?.collectAsState(null)?.value
-    val fabBottomPadding = if (currentSong != null) 76.dp else 16.dp
+    val fabBottomPadding = 16.dp
 
     var showCreateDialog by remember { mutableStateOf(false) }
     var playlistNameInput by remember { mutableStateOf("") }
@@ -1339,7 +1337,19 @@ fun PlaylistDetailView(
                 IconButton(onClick = onBack) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
                 }
-                    if (playlistListState.firstVisibleItemIndex > 0) {
+                    val showStickyTitle by remember {
+                        derivedStateOf {
+                            playlistListState.firstVisibleItemIndex > 0 || playlistListState.firstVisibleItemScrollOffset > 40
+                        }
+                    }
+
+                    val showStickyPlayButton by remember {
+                        derivedStateOf {
+                            playlistListState.firstVisibleItemIndex > 0 || playlistListState.firstVisibleItemScrollOffset > 130
+                        }
+                    }
+
+                    if (showStickyTitle) {
                         Text(
                             playlist.name,
                             style = MaterialTheme.typography.titleMedium,
@@ -1351,7 +1361,7 @@ fun PlaylistDetailView(
                         Spacer(modifier = Modifier.width(1.dp))
                     }
 
-                    if (playlistListState.firstVisibleItemIndex > 0 && songs.isNotEmpty()) {
+                    if (showStickyPlayButton && songs.isNotEmpty()) {
                         IconButton(onClick = {
                             val manager = playerManager
                             if (manager != null && isPlaying) {
