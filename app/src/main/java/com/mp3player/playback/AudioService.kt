@@ -17,6 +17,9 @@ import com.mp3player.MainActivity
 import com.mp3player.data.entity.SongEntity
 import com.mp3player.widget.MusicAppWidgetProvider
 import java.io.File
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class AudioService : Service() {
 
@@ -55,19 +58,29 @@ class AudioService : Service() {
                 MusicAppWidgetProvider.updateWidget(this, song, playerManager.isPlaying.value)
             }
         )
+
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).launch {
+            playerManager.isPlaying.collect { isPlaying ->
+                playerManager.currentPlayingSong.value?.let { song ->
+                    updateNotification(song, isPlaying)
+                    MusicAppWidgetProvider.updateWidget(this@AudioService, song, isPlaying)
+                }
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_PLAY_PAUSE -> {
+                val nextState = !playerManager.isPlaying.value
                 if (playerManager.isPlaying.value) {
                     playerManager.pause()
                 } else {
                     playerManager.resume()
                 }
                 playerManager.currentPlayingSong.value?.let { song ->
-                    updateNotification(song, playerManager.isPlaying.value)
-                    MusicAppWidgetProvider.updateWidget(this, song, playerManager.isPlaying.value)
+                    updateNotification(song, nextState)
+                    MusicAppWidgetProvider.updateWidget(this, song, nextState)
                 }
             }
             ACTION_SKIP_NEXT -> {
@@ -158,7 +171,12 @@ class AudioService : Service() {
             val file = File(song.artworkPath)
             if (file.exists()) {
                 try {
-                    largeIconBitmap = BitmapFactory.decodeFile(file.absolutePath)
+                    val original = BitmapFactory.decodeFile(file.absolutePath)
+                    if (original != null && original.width > 0 && original.height > 0) {
+                        val targetHeight = (original.height * 0.70).toInt()
+                        val topOffset = original.height - targetHeight
+                        largeIconBitmap = Bitmap.createBitmap(original, 0, topOffset, original.width, targetHeight)
+                    }
                 } catch (e: Exception) {
                     e.printStackTrace()
                 }

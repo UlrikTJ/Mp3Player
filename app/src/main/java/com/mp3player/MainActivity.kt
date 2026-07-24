@@ -8,6 +8,7 @@ import android.os.Bundle
 import android.os.IBinder
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.viewModels
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -53,6 +54,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
+import android.provider.OpenableColumns
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.mp3player.data.entity.SongEntity
@@ -328,14 +331,17 @@ fun MiniPlayer(song: SongEntity, viewModel: MusicViewModel) {
                 model = song.artworkPath,
                 contentDescription = "Album Art",
                 modifier = Modifier
-                    .size(48.dp)
+                    .width(64.dp)
+                    .height(48.dp)
                     .clip(RoundedCornerShape(4.dp)),
-                contentScale = ContentScale.Crop
+                contentScale = ContentScale.Crop,
+                alignment = Alignment.BottomCenter
             )
         } else {
             Box(
                 modifier = Modifier
-                    .size(48.dp)
+                    .width(64.dp)
+                    .height(48.dp)
                     .clip(RoundedCornerShape(4.dp))
                     .background(Color.Gray),
                 contentAlignment = Alignment.Center
@@ -965,97 +971,180 @@ fun PlaylistCardCover(
     val songs by remember(playlistId) {
         viewModel.getSongsForPlaylistFlow(playlistId)
     }.collectAsState(initial = emptyList())
+    val stats by viewModel.playlistStats.collectAsState()
     
-    PlaylistCollageCover(songs = songs, modifier = modifier)
+    PlaylistCollageCover(songs = songs, stats = stats, modifier = modifier)
+}
+
+fun getFileNameFromUri(context: Context, uri: android.net.Uri): String? {
+    var result: String? = null
+    if (uri.scheme == "content") {
+        val cursor = context.contentResolver.query(uri, null, null, null, null)
+        cursor?.use {
+            if (it.moveToFirst()) {
+                val nameIdx = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (nameIdx >= 0) result = it.getString(nameIdx)
+            }
+        }
+    }
+    if (result == null) {
+        result = uri.path
+        val cut = result?.lastIndexOf('/') ?: -1
+        if (cut != -1) {
+            result = result?.substring(cut + 1)
+        }
+    }
+    return result
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PlaylistsScreen(viewModel: MusicViewModel) {
+    val context = LocalContext.current
     val playlists by viewModel.allPlaylists.collectAsState()
+    val importProgress by viewModel.importProgress.collectAsState()
+
+    val playerManager by viewModel.playerManager.collectAsState()
+    val currentSong = playerManager?.currentPlayingSong?.collectAsState(null)?.value
+    val fabBottomPadding = if (currentSong != null) 76.dp else 16.dp
+
     var showCreateDialog by remember { mutableStateOf(false) }
     var playlistNameInput by remember { mutableStateOf("") }
     var playlistToDelete by remember { mutableStateOf<com.mp3player.data.entity.PlaylistEntity?>(null) }
 
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                "My Playlists", 
-                style = MaterialTheme.typography.headlineMedium, 
-                color = Color.White,
-                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
-            )
-            Button(
-                onClick = { showCreateDialog = true },
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-            ) {
-                Icon(Icons.Default.Add, contentDescription = "Create Playlist")
-                Spacer(modifier = Modifier.width(4.dp))
-                Text("Create")
-            }
+    var selectedImportUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    var importPlaylistNameInput by remember { mutableStateOf("") }
+    var parsedTrackQueries by remember { mutableStateOf<List<String>>(emptyList()) }
+
+    val importFileLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            selectedImportUri = uri
+            val fileName = getFileNameFromUri(context, uri) ?: "Imported Playlist"
+            importPlaylistNameInput = fileName.substringBeforeLast(".")
+            parsedTrackQueries = viewModel.parsePlaylistFile(uri, context.contentResolver)
         }
-        
-        Spacer(modifier = Modifier.height(24.dp))
-        
-        if (playlists.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("Create your first playlist to organize your music!", color = Color.Gray)
-            }
-        } else {
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(2),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-                modifier = Modifier.fillMaxSize()
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                items(playlists) { playlist ->
-                    Card(
+                Text(
+                    "My Playlists", 
+                    style = MaterialTheme.typography.headlineMedium, 
+                    color = Color.White,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                )
+                OutlinedButton(
+                    onClick = { importFileLauncher.launch("*/*") },
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary)
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = "Import Playlist", modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Import")
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(16.dp))
+
+            importProgress?.let { progress ->
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { 
-                                viewModel.selectPlaylist(playlist.id)
-                            },
-                        shape = RoundedCornerShape(16.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            PlaylistCardCover(
-                                playlistId = playlist.id,
-                                viewModel = viewModel,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .aspectRatio(1f)
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(28.dp),
+                            color = MaterialTheme.colorScheme.primary,
+                            strokeWidth = 3.dp
+                        )
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "Importing Playlist: ${progress.playlistName}",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = Color.White,
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
                             )
-                            
-                            Spacer(modifier = Modifier.height(12.dp))
-                            
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    playlist.name, 
-                                    color = Color.White, 
-                                    fontSize = 15.sp,
-                                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                                    modifier = Modifier.weight(1f),
-                                    maxLines = 1
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                "Track ${progress.currentTrack}/${progress.totalTracks}: ${progress.currentTitle}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color.LightGray,
+                                maxLines = 1
+                            )
+                        }
+                    }
+                }
+            }
+            
+            if (playlists.isEmpty()) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("Create your first playlist to organize your music!", color = Color.Gray)
+                }
+            } else {
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(2),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    items(playlists) { playlist ->
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { 
+                                    viewModel.selectPlaylist(playlist.id)
+                                },
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                PlaylistCardCover(
+                                    playlistId = playlist.id,
+                                    viewModel = viewModel,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .aspectRatio(1f)
                                 )
-                                IconButton(
-                                    onClick = { playlistToDelete = playlist },
-                                    modifier = Modifier.size(24.dp)
+                                
+                                Spacer(modifier = Modifier.height(12.dp))
+                                
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Icon(
-                                        Icons.Default.Delete, 
-                                        contentDescription = "Delete", 
-                                        tint = Color.Red.copy(alpha = 0.6f),
-                                        modifier = Modifier.size(18.dp)
+                                    Text(
+                                        playlist.name, 
+                                        color = Color.White, 
+                                        fontSize = 15.sp,
+                                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                                        modifier = Modifier.weight(1f),
+                                        maxLines = 1
                                     )
+                                    IconButton(
+                                        onClick = { playlistToDelete = playlist },
+                                        modifier = Modifier.size(24.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Delete, 
+                                            contentDescription = "Delete", 
+                                            tint = Color.Red.copy(alpha = 0.6f),
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -1063,6 +1152,65 @@ fun PlaylistsScreen(viewModel: MusicViewModel) {
                 }
             }
         }
+
+        // Floating Action Button for Create Playlist at Bottom-Right
+        FloatingActionButton(
+            onClick = { showCreateDialog = true },
+            containerColor = MaterialTheme.colorScheme.primary,
+            contentColor = Color.Black,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = 16.dp, bottom = fabBottomPadding)
+        ) {
+            Icon(Icons.Default.Add, contentDescription = "Create Playlist")
+        }
+    }
+
+    selectedImportUri?.let { uri ->
+        AlertDialog(
+            onDismissRequest = { selectedImportUri = null },
+            title = { Text("Import Playlist") },
+            text = {
+                Column {
+                    Text(
+                        "Found ${parsedTrackQueries.size} tracks in file.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.LightGray
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        "Downloaded audio files will be stored in a dedicated folder named after this playlist inside Downloads.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    OutlinedTextField(
+                        value = importPlaylistNameInput,
+                        onValueChange = { importPlaylistNameInput = it },
+                        label = { Text("Playlist Name") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val name = importPlaylistNameInput.trim().ifBlank { "Imported Playlist" }
+                        viewModel.importPlaylistFromFile(uri, name, context.contentResolver)
+                        selectedImportUri = null
+                    },
+                    enabled = parsedTrackQueries.isNotEmpty()
+                ) {
+                    Text("Import & Download")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { selectedImportUri = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 
     playlistToDelete?.let { playlist ->
@@ -1203,7 +1351,7 @@ fun PlaylistDetailView(
                         Spacer(modifier = Modifier.width(1.dp))
                     }
 
-                    if (songs.isNotEmpty()) {
+                    if (playlistListState.firstVisibleItemIndex > 0 && songs.isNotEmpty()) {
                         IconButton(onClick = {
                             val manager = playerManager
                             if (manager != null && isPlaying) {

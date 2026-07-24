@@ -11,6 +11,12 @@ abstract class MusicDao {
     @Query("SELECT * FROM songs ORDER BY dateAdded DESC")
     abstract fun getAllSongsFlow(): Flow<List<SongEntity>>
 
+    @Query("SELECT * FROM songs")
+    abstract suspend fun getAllSongsSync(): List<SongEntity>
+
+    @Query("SELECT filePath FROM songs")
+    abstract suspend fun getAllSongFilePaths(): List<String>
+
     @Query("SELECT * FROM songs WHERE id = :songId")
     abstract suspend fun getSongById(songId: Int): SongEntity?
 

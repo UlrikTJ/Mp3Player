@@ -27,12 +27,21 @@ import android.provider.MediaStore
 import com.mp3player.data.entity.PlaylistEntity
 import com.mp3player.data.entity.PlaylistSongCrossRef
 import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.flowOf
-import com.google.gson.JsonParser
-import com.google.gson.JsonArray
+import android.net.Uri
+import android.content.ContentResolver
+import java.io.BufferedReader
+import java.io.InputStreamReader
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
+import com.google.gson.JsonParser
+
+data class ImportBatchProgress(
+    val playlistName: String,
+    val currentTrack: Int,
+    val totalTracks: Int,
+    val currentTitle: String
+)
 
 
 
@@ -123,6 +132,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _downloadProgress = MutableStateFlow<Map<String, Float>>(emptyMap()) // videoId -> progress percentage
     val downloadProgress: StateFlow<Map<String, Float>> = _downloadProgress
+
+    private val _importProgress = MutableStateFlow<ImportBatchProgress?>(null)
+    val importProgress: StateFlow<ImportBatchProgress?> = _importProgress
 
     // History and Queue
     private val _playbackHistory = MutableStateFlow<List<Int>>(emptyList())
@@ -662,14 +674,18 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         title: String,
         artist: String,
         thumbnailUrl: String,
-        inputStream: InputStream
+        inputStream: InputStream,
+        subFolder: String? = null
     ): SongEntity? = withContext(Dispatchers.IO) {
         try {
             val context = getApplication<Application>().applicationContext
-            val musicDir = context.getExternalFilesDir(Environment.DIRECTORY_MUSIC) ?: context.filesDir
+            val baseMusicDir = context.getExternalFilesDir(Environment.DIRECTORY_MUSIC) ?: context.filesDir
+            val targetDir = if (!subFolder.isNullOrBlank()) {
+                File(baseMusicDir, subFolder).apply { if (!exists()) mkdirs() }
+            } else baseMusicDir
             
             val safeName = title.replace(Regex("[^a-zA-Z0-9\\-_ ]"), "").trim().replace(" ", "_")
-            val mp3File = File(musicDir, "${safeName}_${System.currentTimeMillis()}.mp3")
+            val mp3File = File(targetDir, "${safeName}_${System.currentTimeMillis()}.mp3")
             
             // Write stream to file
             FileOutputStream(mp3File).use { outputStream ->
@@ -686,7 +702,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             SongEntity(
                 title = title,
                 artist = artist,
-                album = "YouTube Downloads",
+                album = subFolder ?: "YouTube Downloads",
                 filePath = mp3File.absolutePath,
                 artworkPath = thumbnailUrl, // Store thumbnail URL or path
                 durationMs = durationMs,
@@ -696,6 +712,200 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         } catch (e: Exception) {
             e.printStackTrace()
             null
+        }
+    }
+
+    private fun parseCsvRow(row: String): List<String> {
+        val tokens = mutableListOf<String>()
+        val sb = StringBuilder()
+        var inQuotes = false
+        var i = 0
+        while (i < row.length) {
+            val c = row[i]
+            if (c == '"') {
+                if (inQuotes && i + 1 < row.length && row[i + 1] == '"') {
+                    sb.append('"')
+                    i++
+                } else {
+                    inQuotes = !inQuotes
+                }
+            } else if (c == ',' && !inQuotes) {
+                tokens.add(sb.toString().trim())
+                sb.clear()
+            } else {
+                sb.append(c)
+            }
+            i++
+        }
+        tokens.add(sb.toString().trim())
+        return tokens
+    }
+
+    fun parsePlaylistFile(uri: Uri, contentResolver: ContentResolver): List<String> {
+        val queries = mutableListOf<String>()
+        try {
+            contentResolver.openInputStream(uri)?.use { inputStream ->
+                val reader = BufferedReader(InputStreamReader(inputStream))
+                var line: String? = reader.readLine()
+                var isHeader = true
+                var titleColIdx = -1
+                var artistColIdx = -1
+
+                while (line != null) {
+                    val trimmed = line.trim()
+                    if (trimmed.isNotBlank()) {
+                        if (isHeader && (trimmed.contains("Track", ignoreCase = true) || trimmed.contains("Title", ignoreCase = true) || trimmed.contains("Artist", ignoreCase = true))) {
+                            val cols = parseCsvRow(trimmed)
+                            for (i in cols.indices) {
+                                val colLower = cols[i].lowercase()
+                                if (colLower == "track name" || colLower == "song name" || colLower == "title" || colLower == "track title" || colLower == "name" || (colLower.contains("track") && !colLower.contains("uri") && !colLower.contains("id") && !colLower.contains("url") && !colLower.contains("number") && !colLower.contains("link"))) {
+                                    if (titleColIdx == -1) titleColIdx = i
+                                }
+                                if (colLower.contains("artist")) {
+                                    if (artistColIdx == -1) artistColIdx = i
+                                }
+                            }
+                            // If title column was not found specifically by name, check any column matching title/track
+                            if (titleColIdx == -1) {
+                                for (i in cols.indices) {
+                                    val colLower = cols[i].lowercase()
+                                    if (colLower.contains("title") || (colLower.contains("track") && !colLower.contains("uri"))) {
+                                        titleColIdx = i
+                                        break
+                                    }
+                                }
+                            }
+                            isHeader = false
+                        } else {
+                            isHeader = false
+                            if (trimmed.contains(",")) {
+                                val parts = parseCsvRow(trimmed)
+                                if (titleColIdx != -1 && titleColIdx < parts.size) {
+                                    val rawTitle = parts[titleColIdx]
+                                    val rawArtist = if (artistColIdx != -1 && artistColIdx < parts.size) parts[artistColIdx].replace(";", ", ") else ""
+                                    if (rawTitle.isNotBlank() && !rawTitle.startsWith("spotify:track:")) {
+                                        val query = if (rawArtist.isNotBlank()) "$rawArtist - $rawTitle" else rawTitle
+                                        queries.add(query)
+                                    }
+                                } else if (parts.size >= 2) {
+                                    val part0 = parts[0]
+                                    val part1 = parts[1]
+                                    if (part0.isNotBlank() && part1.isNotBlank()) {
+                                        if (!part0.startsWith("spotify:track:") && !part1.startsWith("spotify:track:")) {
+                                            queries.add("$part0 - $part1")
+                                        } else if (!part1.startsWith("spotify:track:")) {
+                                            queries.add(part1)
+                                        }
+                                    } else if (part0.isNotBlank() && !part0.startsWith("spotify:track:")) {
+                                        queries.add(part0)
+                                    }
+                                } else if (parts.isNotEmpty() && parts[0].isNotBlank() && !parts[0].startsWith("spotify:track:")) {
+                                    queries.add(parts[0])
+                                }
+                            } else {
+                                if (!trimmed.startsWith("spotify:track:")) {
+                                    queries.add(trimmed)
+                                }
+                            }
+                        }
+                    }
+                    line = reader.readLine()
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        return queries
+    }
+
+    fun importPlaylistFromFile(uri: Uri, playlistName: String, contentResolver: ContentResolver) {
+        viewModelScope.launch {
+            val queries = withContext(Dispatchers.IO) {
+                parsePlaylistFile(uri, contentResolver)
+            }
+            if (queries.isEmpty()) return@launch
+
+            val safeFolder = playlistName.replace(Regex("[^a-zA-Z0-9\\-_ ]"), "").trim().ifBlank { "Imported_Playlist" }
+
+            val playlistId = withContext(Dispatchers.IO) {
+                val newPlaylist = PlaylistEntity(name = playlistName)
+                musicDao.insertPlaylist(newPlaylist).toInt()
+            }
+
+            _importProgress.value = ImportBatchProgress(playlistName, 0, queries.size, "Starting batch download...")
+
+            for ((index, query) in queries.withIndex()) {
+                _importProgress.value = ImportBatchProgress(playlistName, index + 1, queries.size, query)
+                
+                try {
+                    var service = apiService
+                    if (service == null) {
+                        val ip = sharedPrefs.getString("server_ip", "100.73.254.38") ?: "100.73.254.38"
+                        updateServerIp(ip)
+                        service = apiService
+                    }
+                    
+                    if (service != null) {
+                        val searchResults = withContext(Dispatchers.IO) {
+                            try { service.search(query) } catch (e: Exception) { emptyList() }
+                        }
+                        val topResult = searchResults.firstOrNull()
+                        if (topResult != null) {
+                            val videoId = topResult.id
+                            val existingSong = allSongs.value.find { it.youtubeVideoId == videoId || (it.title == topResult.title && it.artist == topResult.uploader) }
+                            val songIdToLink = if (existingSong != null) {
+                                existingSong.id
+                            } else {
+                                val responseBody = withContext(Dispatchers.IO) {
+                                    try {
+                                        service.downloadTrack(
+                                            DownloadRequestDto(
+                                                video_id = videoId,
+                                                title = topResult.title,
+                                                artist = topResult.uploader,
+                                                thumbnail_url = topResult.thumbnail,
+                                                album = playlistName
+                                            )
+                                        )
+                                    } catch (e: Exception) { null }
+                                }
+                                if (responseBody != null) {
+                                    val localSong = saveTrackToLocalStorage(
+                                        title = topResult.title,
+                                        artist = topResult.uploader,
+                                        thumbnailUrl = topResult.thumbnail,
+                                        inputStream = responseBody.byteStream(),
+                                        subFolder = safeFolder
+                                    )
+                                    if (localSong != null) {
+                                        withContext(Dispatchers.IO) {
+                                            musicDao.insertSong(localSong).toInt()
+                                        }
+                                    } else null
+                                } else null
+                            }
+
+                            if (songIdToLink != null && songIdToLink > 0) {
+                                withContext(Dispatchers.IO) {
+                                    val songs = musicDao.getSongsForPlaylist(playlistId)
+                                    val nextPosition = songs.size + 1
+                                    musicDao.insertPlaylistSongCrossRef(
+                                        PlaylistSongCrossRef(playlistId = playlistId, songId = songIdToLink, position = nextPosition)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+
+                // Rate limiting delay (1.5 seconds)
+                kotlinx.coroutines.delay(1500)
+            }
+
+            _importProgress.value = null
+            scanLocalStorage()
         }
     }
 
@@ -753,8 +963,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             val selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0"
             val cursor = contentResolver.query(uri, projection, selection, null, null)
             
-            val existingPaths = allSongs.value.map { it.filePath }.toMutableSet()
-            val ignoredPaths = musicDao.getAllIgnoredFilePaths().toSet()
+            val existingPaths = musicDao.getAllSongFilePaths().map { File(it).canonicalPath.lowercase() }.toMutableSet()
+            val ignoredPaths = musicDao.getAllIgnoredFilePaths().map { File(it).canonicalPath.lowercase() }.toSet()
             
             cursor?.use { c ->
                 val titleCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
@@ -764,8 +974,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 val dataCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DATA)
                 
                 while (c.moveToNext()) {
-                    val dataPath = c.getString(dataCol)
-                    if (existingPaths.contains(dataPath) || ignoredPaths.contains(dataPath)) continue
+                    val dataPath = c.getString(dataCol) ?: continue
+                    val normPath = try { File(dataPath).canonicalPath.lowercase() } catch (e: Exception) { dataPath.lowercase() }
+                    if (existingPaths.contains(normPath) || ignoredPaths.contains(normPath)) continue
                     
                     val title = c.getString(titleCol) ?: "Unknown Title"
                     val artist = c.getString(artistCol) ?: "Unknown Artist"
@@ -783,7 +994,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                         youtubeVideoId = null
                     )
                     musicDao.insertSong(song)
-                    existingPaths.add(dataPath)
+                    existingPaths.add(normPath)
                 }
             }
             
@@ -796,7 +1007,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 if (dir.exists()) {
                     dir.walkTopDown().filter { it.isFile && (it.extension.equals("mp3", ignoreCase = true) || it.extension.equals("m4a", ignoreCase = true) || it.extension.equals("flac", ignoreCase = true)) }.forEach { file ->
                         val path = file.absolutePath
-                        if (!existingPaths.contains(path) && !ignoredPaths.contains(path)) {
+                        val normPath = try { file.canonicalPath.lowercase() } catch (e: Exception) { path.lowercase() }
+                        if (!existingPaths.contains(normPath) && !ignoredPaths.contains(normPath)) {
                             val rawName = file.nameWithoutExtension.replace("_", " ")
                             val parts = rawName.split(" - ")
                             val title = if (parts.size > 1) parts[1].trim() else rawName
@@ -813,7 +1025,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                                 youtubeVideoId = null
                             )
                             musicDao.insertSong(song)
-                            existingPaths.add(path)
+                            existingPaths.add(normPath)
                         }
                     }
                 }
