@@ -77,6 +77,10 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.RemoveCircle
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -392,9 +396,13 @@ fun LibraryScreen(viewModel: MusicViewModel) {
     var expandedFolder by remember { mutableStateOf<String?>(null) }
     var filterQuery by remember { mutableStateOf("") }
 
-    val filteredSongs = remember(songs, filterQuery) {
-        if (filterQuery.isBlank()) songs
-        else songs.filter {
+    var isEditMode by remember { mutableStateOf(false) }
+    var displayLibrarySongs by remember(songs) { mutableStateOf(songs) }
+    var deletedSongsHistory by remember { mutableStateOf<List<Pair<Int, SongEntity>>>(emptyList()) }
+
+    val filteredSongs = remember(displayLibrarySongs, filterQuery) {
+        if (filterQuery.isBlank()) displayLibrarySongs
+        else displayLibrarySongs.filter {
             it.title.contains(filterQuery, ignoreCase = true) ||
             it.artist.contains(filterQuery, ignoreCase = true)
         }
@@ -422,27 +430,81 @@ fun LibraryScreen(viewModel: MusicViewModel) {
                     fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
                 )
                 Text(
-                    "${songs.size} tracks available", 
+                    "${filteredSongs.size} tracks available", 
                     style = MaterialTheme.typography.bodySmall, 
                     color = Color.Gray
                 )
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (songs.isNotEmpty()) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (isEditMode) {
                     IconButton(
-                        onClick = { viewModel.playAllShuffled() },
-                        modifier = Modifier.background(MaterialTheme.colorScheme.primary, shape = RoundedCornerShape(12.dp))
+                        onClick = {
+                            if (deletedSongsHistory.isNotEmpty()) {
+                                val (origIdx, restoredSong) = deletedSongsHistory.last()
+                                deletedSongsHistory = deletedSongsHistory.dropLast(1)
+                                val updated = displayLibrarySongs.toMutableList()
+                                val insertPos = origIdx.coerceIn(0, updated.size)
+                                updated.add(insertPos, restoredSong)
+                                displayLibrarySongs = updated
+                            }
+                        },
+                        enabled = deletedSongsHistory.isNotEmpty()
                     ) {
-                        Icon(Icons.Default.Shuffle, contentDescription = "Shuffle All", tint = Color.Black)
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.Undo,
+                            contentDescription = "Undo Last Removal",
+                            tint = if (deletedSongsHistory.isNotEmpty()) MaterialTheme.colorScheme.primary else Color.Gray
+                        )
                     }
-                }
-                val context = LocalContext.current
-                val activity = context as? MainActivity
-                IconButton(
-                    onClick = { activity?.checkAndRequestScanPermission() },
-                    modifier = Modifier.background(MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(12.dp))
-                ) {
-                    Icon(Icons.Default.Search, contentDescription = "Scan Storage", tint = MaterialTheme.colorScheme.primary)
+
+                    TextButton(
+                        onClick = {
+                            if (deletedSongsHistory.isNotEmpty()) {
+                                displayLibrarySongs = songs
+                                deletedSongsHistory = emptyList()
+                            }
+                        },
+                        enabled = deletedSongsHistory.isNotEmpty()
+                    ) {
+                        Text("Revert All", color = if (deletedSongsHistory.isNotEmpty()) MaterialTheme.colorScheme.primary else Color.Gray, fontSize = 12.sp)
+                    }
+
+                    Button(
+                        onClick = {
+                            deletedSongsHistory.forEach { (_, song) ->
+                                viewModel.deleteSongFromApp(song)
+                            }
+                            deletedSongsHistory = emptyList()
+                            isEditMode = false
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                    ) {
+                        Text("Done", color = Color.Black, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                    }
+                } else {
+                    IconButton(
+                        onClick = { isEditMode = true },
+                        modifier = Modifier.background(MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(12.dp))
+                    ) {
+                        Icon(Icons.Default.Edit, contentDescription = "Edit Library", tint = MaterialTheme.colorScheme.primary)
+                    }
+
+                    if (songs.isNotEmpty()) {
+                        IconButton(
+                            onClick = { viewModel.playAllShuffled() },
+                            modifier = Modifier.background(MaterialTheme.colorScheme.primary, shape = RoundedCornerShape(12.dp))
+                        ) {
+                            Icon(Icons.Default.Shuffle, contentDescription = "Shuffle All", tint = Color.Black)
+                        }
+                    }
+                    val context = LocalContext.current
+                    val activity = context as? MainActivity
+                    IconButton(
+                        onClick = { activity?.checkAndRequestScanPermission() },
+                        modifier = Modifier.background(MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(12.dp))
+                    ) {
+                        Icon(Icons.Default.Search, contentDescription = "Scan Storage", tint = MaterialTheme.colorScheme.primary)
+                    }
                 }
             }
         }
@@ -520,8 +582,18 @@ fun LibraryScreen(viewModel: MusicViewModel) {
         } else {
             if (viewMode == "ALL") {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(filteredSongs) { song ->
-                        SongRow(song = song, viewModel = viewModel)
+                    itemsIndexed(filteredSongs) { index, song ->
+                        SongRow(
+                            song = song, 
+                            viewModel = viewModel,
+                            isEditMode = isEditMode,
+                            onDeleteClick = {
+                                val removedSong = song
+                                val removedIdx = index
+                                displayLibrarySongs = displayLibrarySongs.filter { it.id != song.id }
+                                deletedSongsHistory = deletedSongsHistory + (removedIdx to removedSong)
+                            }
+                        )
                     }
                 }
             } else {
@@ -560,8 +632,19 @@ fun LibraryScreen(viewModel: MusicViewModel) {
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(folders[expandedFolder] ?: emptyList()) { song ->
-                            SongRow(song = song, viewModel = viewModel)
+                        val folderSongs = folders[expandedFolder] ?: emptyList()
+                        itemsIndexed(folderSongs) { index, song ->
+                            SongRow(
+                                song = song, 
+                                viewModel = viewModel,
+                                isEditMode = isEditMode,
+                                onDeleteClick = {
+                                    val removedSong = song
+                                    val removedIdx = index
+                                    displayLibrarySongs = displayLibrarySongs.filter { it.id != song.id }
+                                    deletedSongsHistory = deletedSongsHistory + (removedIdx to removedSong)
+                                }
+                            )
                         }
                     }
                 }
@@ -571,7 +654,12 @@ fun LibraryScreen(viewModel: MusicViewModel) {
 }
 
 @Composable
-fun SongRow(song: SongEntity, viewModel: MusicViewModel) {
+fun SongRow(
+    song: SongEntity, 
+    viewModel: MusicViewModel, 
+    isEditMode: Boolean = false, 
+    onDeleteClick: (() -> Unit)? = null
+) {
     var menuExpanded by remember { mutableStateOf(false) }
     var showAppDeleteConfirm by remember { mutableStateOf(false) }
     var showDeviceDeleteConfirm by remember { mutableStateOf(false) }
@@ -615,35 +703,41 @@ fun SongRow(song: SongEntity, viewModel: MusicViewModel) {
                 Text(song.artist, color = Color.Gray, fontSize = 14.sp, maxLines = 1)
             }
             
-            Box {
-                IconButton(onClick = { menuExpanded = true }) {
-                    Icon(Icons.Default.MoreVert, contentDescription = "Options", tint = Color.LightGray)
+            if (isEditMode) {
+                IconButton(onClick = { onDeleteClick?.invoke() }) {
+                    Icon(Icons.Default.RemoveCircle, contentDescription = "Delete", tint = Color.Red.copy(alpha = 0.85f))
                 }
-                DropdownMenu(
-                    expanded = menuExpanded,
-                    onDismissRequest = { menuExpanded = false }
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("Add to Playlist") },
-                        onClick = {
-                            menuExpanded = false
-                            showPlaylistPicker = true
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Delete from App (Ignore file)") },
-                        onClick = {
-                            menuExpanded = false
-                            showAppDeleteConfirm = true
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Delete from Device", color = Color(0xFFB71C1C)) },
-                        onClick = {
-                            menuExpanded = false
-                            showDeviceDeleteConfirm = true
-                        }
-                    )
+            } else {
+                Box {
+                    IconButton(onClick = { menuExpanded = true }) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "Options", tint = Color.LightGray)
+                    }
+                    DropdownMenu(
+                        expanded = menuExpanded,
+                        onDismissRequest = { menuExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Add to Playlist") },
+                            onClick = {
+                                menuExpanded = false
+                                showPlaylistPicker = true
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Delete from App (Ignore file)") },
+                            onClick = {
+                                menuExpanded = false
+                                showAppDeleteConfirm = true
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Delete from Device", color = Color(0xFFB71C1C)) },
+                            onClick = {
+                                menuExpanded = false
+                                showDeviceDeleteConfirm = true
+                            }
+                        )
+                    }
                 }
             }
         }
@@ -1282,7 +1376,8 @@ fun PlaylistDetailView(
     var showRenameDialog by remember { mutableStateOf(false) }
     var songToRemove by remember { mutableStateOf<SongEntity?>(null) }
     var showWeightEditDialog by remember { mutableStateOf<SongEntity?>(null) }
-    var isReorderMode by remember { mutableStateOf(false) }
+    var isEditMode by remember { mutableStateOf(false) }
+    var deletedSongsHistory by remember { mutableStateOf<List<Pair<Int, SongEntity>>>(emptyList()) }
     
     var draggedIndex by remember { mutableStateOf<Int?>(null) }
     var initialDraggedIndex by remember { mutableStateOf<Int?>(null) }
@@ -1326,7 +1421,7 @@ fun PlaylistDetailView(
         color = MaterialTheme.colorScheme.background
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            // Top Action Bar with sticky Play/Pause button
+            // Top Action Bar with sticky Play/Pause button or Edit mode controls
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1337,6 +1432,55 @@ fun PlaylistDetailView(
                 IconButton(onClick = onBack) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
                 }
+                
+                if (isEditMode) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        IconButton(
+                            onClick = {
+                                if (deletedSongsHistory.isNotEmpty()) {
+                                    val (origIdx, restoredSong) = deletedSongsHistory.last()
+                                    deletedSongsHistory = deletedSongsHistory.dropLast(1)
+                                    val updated = displaySongs.toMutableList()
+                                    val insertPos = origIdx.coerceIn(0, updated.size)
+                                    updated.add(insertPos, restoredSong)
+                                    displaySongs = updated
+                                }
+                            },
+                            enabled = deletedSongsHistory.isNotEmpty()
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.Undo,
+                                contentDescription = "Undo Last Removal",
+                                tint = if (deletedSongsHistory.isNotEmpty()) MaterialTheme.colorScheme.primary else Color.Gray
+                            )
+                        }
+
+                        TextButton(
+                            onClick = {
+                                if (deletedSongsHistory.isNotEmpty()) {
+                                    displaySongs = songs
+                                    deletedSongsHistory = emptyList()
+                                }
+                            },
+                            enabled = deletedSongsHistory.isNotEmpty()
+                        ) {
+                            Text("Revert All", color = if (deletedSongsHistory.isNotEmpty()) MaterialTheme.colorScheme.primary else Color.Gray, fontSize = 12.sp)
+                        }
+
+                        Button(
+                            onClick = {
+                                deletedSongsHistory.forEach { (_, song) ->
+                                    viewModel.removeSongFromPlaylist(playlist.id, song.id)
+                                }
+                                deletedSongsHistory = emptyList()
+                                isEditMode = false
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                        ) {
+                            Text("Done", color = Color.Black, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                        }
+                    }
+                } else {
                     val showStickyTitle by remember {
                         derivedStateOf {
                             playlistListState.firstVisibleItemIndex > 0 || playlistListState.firstVisibleItemScrollOffset > 40
@@ -1380,6 +1524,7 @@ fun PlaylistDetailView(
                         Box(modifier = Modifier.size(48.dp))
                     }
                 }
+            }
 
                 val currentDraggedIndex = draggedIndex
                 // Mutable ref so onDragEnd/onDragCancel always read the latest value
@@ -1454,7 +1599,7 @@ fun PlaylistDetailView(
                                         )
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Text(
-                                            "${songs.size} tracks",
+                                            "${displaySongs.size} tracks",
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = Color.Gray
                                         )
@@ -1508,10 +1653,10 @@ fun PlaylistDetailView(
                                         Spacer(modifier = Modifier.width(4.dp))
                                         Text("Add Track", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
                                     }
-                                    TextButton(onClick = { isReorderMode = !isReorderMode }) {
-                                        Icon(Icons.Default.DragHandle, contentDescription = null, tint = if (isReorderMode) MaterialTheme.colorScheme.primary else Color.LightGray, modifier = Modifier.size(16.dp))
+                                    TextButton(onClick = { isEditMode = !isEditMode }) {
+                                        Icon(Icons.Default.Edit, contentDescription = null, tint = if (isEditMode) MaterialTheme.colorScheme.primary else Color.LightGray, modifier = Modifier.size(16.dp))
                                         Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Reorder", color = if (isReorderMode) MaterialTheme.colorScheme.primary else Color.LightGray, fontSize = 12.sp)
+                                        Text("Edit", color = if (isEditMode) MaterialTheme.colorScheme.primary else Color.LightGray, fontSize = 12.sp)
                                     }
                                     TextButton(onClick = { showStatsDialog = true }) {
                                         Icon(Icons.Default.Tune, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
@@ -1578,7 +1723,7 @@ fun PlaylistDetailView(
                                             .padding(vertical = 8.dp, horizontal = 4.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        if (isReorderMode) {
+                                        if (isEditMode) {
                                             Icon(
                                                 imageVector = Icons.Default.DragHandle,
                                                 contentDescription = "Drag to reorder",
@@ -1655,37 +1800,52 @@ fun PlaylistDetailView(
                                             Text(song.artist, color = Color.Gray, fontSize = 13.sp, maxLines = 1)
                                         }
                                         
-                                        // Options three dots button
-                                        var menuExpanded by remember { mutableStateOf(false) }
-                                        Box {
-                                            IconButton(onClick = { menuExpanded = true }) {
-                                                Icon(Icons.Default.MoreVert, contentDescription = "Options", tint = Color.LightGray)
+                                        if (isEditMode) {
+                                            IconButton(onClick = {
+                                                val removedSong = song
+                                                val removedIdx = index
+                                                displaySongs = displaySongs.filter { it.id != song.id }
+                                                deletedSongsHistory = deletedSongsHistory + (removedIdx to removedSong)
+                                            }) {
+                                                Icon(
+                                                    imageVector = Icons.Default.RemoveCircle,
+                                                    contentDescription = "Remove from Playlist",
+                                                    tint = Color.Red.copy(alpha = 0.85f)
+                                                )
                                             }
-                                            DropdownMenu(
-                                                expanded = menuExpanded,
-                                                onDismissRequest = { menuExpanded = false }
-                                            ) {
-                                                DropdownMenuItem(
-                                                    text = { Text("Add to Queue") },
-                                                    onClick = {
-                                                        viewModel.addToQueue(song)
-                                                        menuExpanded = false
-                                                    }
-                                                )
-                                                DropdownMenuItem(
-                                                    text = { Text("Change Weight") },
-                                                    onClick = {
-                                                        showWeightEditDialog = song
-                                                        menuExpanded = false
-                                                    }
-                                                )
-                                                DropdownMenuItem(
-                                                    text = { Text("Remove from Playlist") },
-                                                    onClick = {
-                                                        songToRemove = song
-                                                        menuExpanded = false
-                                                    }
-                                                )
+                                        } else {
+                                            // Options three dots button
+                                            var menuExpanded by remember { mutableStateOf(false) }
+                                            Box {
+                                                IconButton(onClick = { menuExpanded = true }) {
+                                                    Icon(Icons.Default.MoreVert, contentDescription = "Options", tint = Color.LightGray)
+                                                }
+                                                DropdownMenu(
+                                                    expanded = menuExpanded,
+                                                    onDismissRequest = { menuExpanded = false }
+                                                ) {
+                                                    DropdownMenuItem(
+                                                        text = { Text("Add to Queue") },
+                                                        onClick = {
+                                                            viewModel.addToQueue(song)
+                                                            menuExpanded = false
+                                                        }
+                                                    )
+                                                    DropdownMenuItem(
+                                                        text = { Text("Change Weight") },
+                                                        onClick = {
+                                                            showWeightEditDialog = song
+                                                            menuExpanded = false
+                                                        }
+                                                    )
+                                                    DropdownMenuItem(
+                                                        text = { Text("Remove from Playlist") },
+                                                        onClick = {
+                                                            songToRemove = song
+                                                            menuExpanded = false
+                                                        }
+                                                    )
+                                                }
                                             }
                                         }
                                     }
