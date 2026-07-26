@@ -35,6 +35,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.Repeat
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
@@ -277,7 +278,7 @@ fun SplashScreen(onTimeout: () -> Unit) {
                 contentDescription = "App Logo",
                 modifier = Modifier
                     .size(110.dp)
-                    .clip(RoundedCornerShape(24.dp))
+                    .clip(CircleShape)
             )
             Spacer(modifier = Modifier.height(20.dp))
             Text(

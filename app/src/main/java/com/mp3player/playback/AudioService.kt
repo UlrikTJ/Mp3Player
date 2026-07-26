@@ -55,8 +55,6 @@ class AudioService : Service() {
             isActive = true
         }
 
-        showPlaceholderNotification()
-
         playerManager = CrossfadePlayerManager(
             context = this,
             onTrackEnded = { onTrackEndedListener?.invoke() },
