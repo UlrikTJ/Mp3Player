@@ -280,6 +280,12 @@ class AudioService : Service() {
             withContext(Dispatchers.Main) {
                 try {
                     if (isPlaying) {
+                        val serviceIntent = Intent(this@AudioService, AudioService::class.java)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            startForegroundService(serviceIntent)
+                        } else {
+                            startService(serviceIntent)
+                        }
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                             startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
                         } else {

@@ -182,18 +182,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Start and Bind Playback Service
+        // Bind Playback Service
         val intent = Intent(this, AudioService::class.java)
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(intent)
-            } else {
-                startService(intent)
-            }
-        } catch (e: Exception) {
-            // Handle BackgroundServiceStartNotAllowedException on Android 12+
-            e.printStackTrace()
-        }
         bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
 
         setContent {
