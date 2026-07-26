@@ -122,9 +122,7 @@ class CrossfadePlayerManager(
     private fun setupPlayerListeners(player: ExoPlayer) {
         player.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
-                if (player === currentPlayer) {
-                    _isPlaying.value = isPlaying
-                }
+                _isPlaying.value = currentPlayer.isPlaying || (isCrossfading && nextPlayer.isPlaying)
             }
 
             override fun onPlaybackStateChanged(state: Int) {
@@ -169,6 +167,7 @@ class CrossfadePlayerManager(
         currentPlayer.prepare()
         currentPlayer.seekTo(0L)
         currentPlayer.play()
+        _isPlaying.value = true
         onTrackStarted(song)
 
         if (nextSongToPrepare != null) {
@@ -240,6 +239,7 @@ class CrossfadePlayerManager(
         nextPlayer.prepare()
         nextPlayer.seekTo(0L)
         nextPlayer.play()
+        _isPlaying.value = true
 
         val fadeSteps = 50
         val stepDuration = (crossfadeDurationMs / fadeSteps).coerceAtLeast(10L)
@@ -275,6 +275,7 @@ class CrossfadePlayerManager(
                     nextSong = null
                     isCrossfading = false
                     _isCrossfadingFlow.value = false
+                    _isPlaying.value = currentPlayer.isPlaying
 
                     onTrackStarted(incomingSong)
 
