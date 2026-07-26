@@ -202,10 +202,27 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         sharedPrefs.edit().putBoolean("keeper_bonus", enabled).apply()
     }
 
+    fun updateWidgets() {
+        val song = _playerManager.value?.currentPlayingSong?.value
+        val isPlaying = _playerManager.value?.isPlaying?.value ?: false
+        com.mp3player.widget.MusicAppWidgetProvider.updateWidget(
+            getApplication(),
+            song,
+            isPlaying,
+            _useWeightedShuffle.value,
+            _isLooping.value
+        )
+    }
+
     fun toggleLooping() {
         val newValue = !_isLooping.value
         _isLooping.value = newValue
         sharedPrefs.edit().putBoolean("is_looping", newValue).apply()
+        updateWidgets()
+    }
+
+    fun toggleRepeatMode() {
+        toggleLooping()
     }
 
     fun toggleShuffle() {
@@ -213,6 +230,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         _useWeightedShuffle.value = newValue
         sharedPrefs.edit().putBoolean("weighted_shuffle", newValue).apply()
         _playedSongIds.value = emptySet()
+        updateWidgets()
     }
 
     fun updateCooldownFormula(formula: String) {

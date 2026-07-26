@@ -42,6 +42,7 @@ class AudioService : Service() {
     var onPrepareNextSongListener: (() -> SongEntity?)? = null
     var onSkipPreviousListener: (() -> Unit)? = null
     var onToggleShuffleListener: (() -> Unit)? = null
+    var onToggleRepeatListener: (() -> Unit)? = null
 
     inner class AudioBinder : Binder() {
         fun getService(): AudioService = this@AudioService
@@ -103,6 +104,9 @@ class AudioService : Service() {
             }
             ACTION_TOGGLE_SHUFFLE -> {
                 onToggleShuffleListener?.invoke()
+            }
+            ACTION_TOGGLE_REPEAT -> {
+                onToggleRepeatListener?.invoke()
             }
         }
         return Service.START_NOT_STICKY
@@ -320,5 +324,6 @@ class AudioService : Service() {
         const val ACTION_SKIP_NEXT = "com.mp3player.ACTION_SKIP_NEXT"
         const val ACTION_SKIP_PREVIOUS = "com.mp3player.ACTION_SKIP_PREVIOUS"
         const val ACTION_TOGGLE_SHUFFLE = "com.mp3player.ACTION_TOGGLE_SHUFFLE"
+        const val ACTION_TOGGLE_REPEAT = "com.mp3player.ACTION_TOGGLE_REPEAT"
     }
 }

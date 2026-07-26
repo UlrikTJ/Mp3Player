@@ -171,6 +171,9 @@ class MainActivity : ComponentActivity() {
             boundService.onToggleShuffleListener = {
                 viewModel.toggleShuffle()
             }
+            boundService.onToggleRepeatListener = {
+                viewModel.toggleRepeatMode()
+            }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -218,23 +221,7 @@ fun AppTheme(content: @Composable () -> Unit) {
 }
 
 @Composable
-fun SplashScreen(onTimeout: () -> Unit) {
-    var startAnimation by remember { mutableStateOf(false) }
-    val alphaAnim by animateFloatAsState(
-        targetValue = if (startAnimation) 1f else 0f,
-        animationSpec = tween(durationMillis = 1000)
-    )
-    val scaleAnim by animateFloatAsState(
-        targetValue = if (startAnimation) 1f else 0.85f,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy)
-    )
-
-    LaunchedEffect(Unit) {
-        startAnimation = true
-        delay(2000)
-        onTimeout()
-    }
-
+fun SplashScreen() {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -244,24 +231,13 @@ fun SplashScreen(onTimeout: () -> Unit) {
         Image(
             painter = painterResource(id = R.drawable.splash_art),
             contentDescription = "Splash Art",
-            modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer {
-                    alpha = alphaAnim * 0.45f
-                    scaleX = scaleAnim
-                    scaleY = scaleAnim
-                },
+            modifier = Modifier.fillMaxSize(),
             contentScale = ContentScale.Crop
         )
 
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-            modifier = Modifier.graphicsLayer {
-                alpha = alphaAnim
-                scaleX = scaleAnim
-                scaleY = scaleAnim
-            }
+            verticalArrangement = Arrangement.Center
         ) {
             Image(
                 painter = painterResource(id = R.drawable.app_icon),
@@ -295,16 +271,23 @@ fun SplashScreen(onTimeout: () -> Unit) {
 
 @Composable
 fun MainScreen(viewModel: MusicViewModel) {
-    var showSplash by remember { mutableStateOf(true) }
+    val allSongs by viewModel.allSongs.collectAsState()
+    val allPlaylists by viewModel.allPlaylists.collectAsState()
+    var isLoaded by remember { mutableStateOf(false) }
 
-    if (showSplash) {
-        SplashScreen(onTimeout = { showSplash = false })
+    LaunchedEffect(allSongs, allPlaylists) {
+        if (!isLoaded) {
+            isLoaded = true
+        }
+    }
+
+    if (!isLoaded) {
+        SplashScreen()
         return
     }
 
     var selectedTab by remember { mutableIntStateOf(0) }
     val activePlaylistId by viewModel.selectedPlaylistId.collectAsState()
-    val allPlaylists by viewModel.allPlaylists.collectAsState()
     val activePlaylist = remember(activePlaylistId, allPlaylists) {
         allPlaylists.firstOrNull { it.id == activePlaylistId }
     }

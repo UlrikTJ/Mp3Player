@@ -28,10 +28,16 @@ abstract class BaseMusicWidgetProvider(private val layoutResId: Int) : AppWidget
 
 class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1) {
     companion object {
-        fun updateWidget(context: Context, song: SongEntity?, isPlaying: Boolean) {
-            updateProvider(context, MusicAppWidgetProvider::class.java, R.layout.widget_music_4x1, song, isPlaying)
-            updateProvider(context, MusicWidget4x2Provider::class.java, R.layout.widget_music_4x2, song, isPlaying)
-            updateProvider(context, MusicWidgetSquircleProvider::class.java, R.layout.widget_music_squircle, song, isPlaying)
+        fun updateWidget(
+            context: Context,
+            song: SongEntity?,
+            isPlaying: Boolean,
+            isShuffleEnabled: Boolean = false,
+            isRepeatEnabled: Boolean = false
+        ) {
+            updateProvider(context, MusicAppWidgetProvider::class.java, R.layout.widget_music_4x1, song, isPlaying, isShuffleEnabled, isRepeatEnabled)
+            updateProvider(context, MusicWidget4x2Provider::class.java, R.layout.widget_music_4x2, song, isPlaying, isShuffleEnabled, isRepeatEnabled)
+            updateProvider(context, MusicWidgetSquircleProvider::class.java, R.layout.widget_music_squircle, song, isPlaying, isShuffleEnabled, isRepeatEnabled)
         }
 
         private fun updateProvider(
@@ -39,7 +45,9 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
             providerClass: Class<*>,
             layoutResId: Int,
             song: SongEntity?,
-            isPlaying: Boolean
+            isPlaying: Boolean,
+            isShuffleEnabled: Boolean,
+            isRepeatEnabled: Boolean
         ) {
             val appWidgetManager = AppWidgetManager.getInstance(context)
             val componentName = ComponentName(context, providerClass)
@@ -52,6 +60,10 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
             val artist = song?.artist ?: "Select a song to play"
             remoteViews.setTextViewText(R.id.widget_title, title)
             remoteViews.setTextViewText(R.id.widget_artist, artist)
+
+            // Enable marquee scrolling on title and artist
+            remoteViews.setBoolean(R.id.widget_title, "setSelected", true)
+            remoteViews.setBoolean(R.id.widget_artist, "setSelected", true)
 
             val playPauseIcon = if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play
             remoteViews.setImageViewResource(R.id.widget_btn_play_pause, playPauseIcon)
@@ -76,7 +88,32 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
                 remoteViews.setImageViewResource(R.id.widget_album_art, R.drawable.ic_music_note)
             }
 
-            // Pending Intents for controls
+            // Shuffle & Repeat active tints & intents for 4x2 widget
+            if (layoutResId == R.layout.widget_music_4x2) {
+                val shuffleColor = if (isShuffleEnabled) 0xFF1DB954.toInt() else 0xFF808080.toInt()
+                remoteViews.setInt(R.id.widget_btn_shuffle, "setColorFilter", shuffleColor)
+
+                val repeatColor = if (isRepeatEnabled) 0xFF1DB954.toInt() else 0xFF808080.toInt()
+                remoteViews.setInt(R.id.widget_btn_repeat, "setColorFilter", repeatColor)
+
+                val shuffleIntent = Intent(context, AudioService::class.java).apply {
+                    action = AudioService.ACTION_TOGGLE_SHUFFLE
+                }
+                val shufflePendingIntent = PendingIntent.getService(
+                    context, 13, shuffleIntent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                )
+                remoteViews.setOnClickPendingIntent(R.id.widget_btn_shuffle, shufflePendingIntent)
+
+                val repeatIntent = Intent(context, AudioService::class.java).apply {
+                    action = AudioService.ACTION_TOGGLE_REPEAT
+                }
+                val repeatPendingIntent = PendingIntent.getService(
+                    context, 14, repeatIntent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                )
+                remoteViews.setOnClickPendingIntent(R.id.widget_btn_repeat, repeatPendingIntent)
+            }
+
+            // Pending Intents for standard controls
             val prevIntent = Intent(context, AudioService::class.java).apply {
                 action = AudioService.ACTION_SKIP_PREVIOUS
             }
