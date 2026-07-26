@@ -117,11 +117,16 @@ class AudioService : Service() {
     fun getPlayerManager(): CrossfadePlayerManager = playerManager
 
     private fun showPlaceholderNotification() {
+        val notificationIntent = Intent(this, MainActivity::class.java)
+        val pendingIntent = PendingIntent.getActivity(
+            this, 0, notificationIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("MP3 Player")
-            .setContentText("Initializing player...")
+            .setContentTitle("Music")
             .setSmallIcon(R.drawable.ic_music_note)
-            .setOngoing(true)
+            .setContentIntent(pendingIntent)
             .build()
 
         try {
@@ -133,7 +138,6 @@ class AudioService : Service() {
         } catch (e: Exception) {
             // Android 12+ (S) / 14+ (U) restriction: Background apps cannot start foreground services.
             e.printStackTrace()
-            // Notification will not be shown as foreground, service might be killed by OS soon.
         }
     }
 
