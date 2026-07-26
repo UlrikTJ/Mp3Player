@@ -93,6 +93,9 @@ abstract class MusicDao {
     @Query("DELETE FROM playback_events WHERE playlistId = :playlistId")
     abstract suspend fun deletePlaybackEventsForPlaylist(playlistId: Int)
 
+    @Query("DELETE FROM chain_skip_events WHERE keeperSongId IN (SELECT songId FROM playlist_songs WHERE playlistId = :playlistId)")
+    abstract suspend fun deleteKeeperEventsForPlaylist(playlistId: Int)
+
     // --- Stats & History Logging ---
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     abstract suspend fun insertPlaybackEvent(event: PlaybackEventEntity): Long

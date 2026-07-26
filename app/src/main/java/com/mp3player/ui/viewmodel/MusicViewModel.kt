@@ -456,12 +456,34 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun playPreviousSong() {
         val queue = _currentQueue.value
         if (queue.isEmpty()) return
-        statsTracker.onTrackEnded(completed = false)
-        if (currentQueueIndex > 0) {
+        
+        val history = _playbackHistory.value.toMutableList()
+        
+        if (history.size > 1) {
+            history.removeAt(history.lastIndex)
+            val prevSongId = history.last()
+            _playbackHistory.value = history
+            
+            val idx = queue.indexOfFirst { it.id == prevSongId }
+            if (idx != -1) {
+                currentQueueIndex = idx
+            } else {
+                val all = allSongs.value
+                val prevSong = all.find { it.id == prevSongId }
+                if (prevSong != null) {
+                    val newQueue = queue.toMutableList()
+                    newQueue.add(0, prevSong)
+                    _currentQueue.value = newQueue
+                    currentQueueIndex = 0
+                }
+            }
+        } else if (currentQueueIndex > 0) {
             currentQueueIndex--
         } else {
-            currentQueueIndex = queue.size - 1
+            currentQueueIndex = 0
         }
+        
+        statsTracker.onTrackEnded(completed = false)
         playCurrentQueueIndex(selectedPlaylistId.value)
     }
 
@@ -1396,6 +1418,27 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
 
+    fun resetPlaylistWeights(playlistId: Int) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val songs = musicDao.getSongsForPlaylist(playlistId)
+            for (song in songs) {
+                musicDao.updateSongWeight(song.id, 1.0f)
+            }
+        }
+    }
+
+    fun resetPlaylistSkips(playlistId: Int) {
+        viewModelScope.launch(Dispatchers.IO) {
+            musicDao.deletePlaybackEventsForPlaylist(playlistId)
+        }
+    }
+
+    fun resetPlaylistSkippedTo(playlistId: Int) {
+        viewModelScope.launch(Dispatchers.IO) {
+            musicDao.deleteKeeperEventsForPlaylist(playlistId)
+        }
+    }
+
     fun resetPlaylistStats(playlistId: Int) {
         viewModelScope.launch(Dispatchers.IO) {
             val songs = musicDao.getSongsForPlaylist(playlistId)
@@ -1403,6 +1446,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 musicDao.updateSongWeight(song.id, 1.0f)
             }
             musicDao.deletePlaybackEventsForPlaylist(playlistId)
+            musicDao.deleteKeeperEventsForPlaylist(playlistId)
         }
     }
 

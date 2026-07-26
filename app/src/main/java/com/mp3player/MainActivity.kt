@@ -2038,7 +2038,8 @@ fun PlaylistDetailView(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        Column(modifier = Modifier.weight(1f).fillMaxWidth().padding(24.dp)) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -2089,6 +2090,13 @@ fun PlaylistDetailView(
                                 }
                             }
                         }
+                        }
+
+                        val playerManager by viewModel.playerManager.collectAsState()
+                        val currentSong = playerManager?.currentPlayingSong?.collectAsState(null)?.value
+                        if (currentSong != null) {
+                            MiniPlayer(song = currentSong, viewModel = viewModel)
+                        }
                     }
                 }
             }
@@ -2114,6 +2122,30 @@ fun PlaylistStatsDialog(
     val stats by viewModel.playlistStats.collectAsState()
     val keepers by viewModel.playlistKeepers.collectAsState()
 
+    var isSkippedToExpanded by remember { mutableStateOf(true) }
+    var isWeightsExpanded by remember { mutableStateOf(true) }
+
+    // Sort Category: 0 = Playlist Order, 1 = Skipped, 2 = Weight
+    var activeSortCategory by remember { mutableIntStateOf(0) }
+    var sortAscending by remember { mutableStateOf(true) }
+
+    val sortedStats = remember(stats, activeSortCategory, sortAscending) {
+        when (activeSortCategory) {
+            0 -> if (sortAscending) stats else stats.reversed()
+            1 -> if (sortAscending) {
+                stats.sortedByDescending { it.skipRate * 1000f + it.skipCount }
+            } else {
+                stats.sortedBy { it.skipRate * 1000f + it.skipCount }
+            }
+            2 -> if (sortAscending) {
+                stats.sortedByDescending { it.baseWeight }
+            } else {
+                stats.sortedBy { it.baseWeight }
+            }
+            else -> stats
+        }
+    }
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -2122,109 +2154,210 @@ fun PlaylistStatsDialog(
             modifier = Modifier.fillMaxSize(),
             color = MaterialTheme.colorScheme.background
         ) {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(24.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("$playlistName Stats", style = MaterialTheme.typography.titleLarge, color = Color.White, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
-                        IconButton(onClick = onDismiss) {
-                            Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
-                        }
-                    }
-                }
-
-                item {
-                    Text("Skipped to", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
-                }
-
-                if (keepers.isEmpty()) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                LazyColumn(
+                    modifier = Modifier.weight(1f).fillMaxWidth().padding(24.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
                     item {
-                        Text("No skip-over destination events logged for this playlist.", color = Color.Gray, fontSize = 14.sp)
-                    }
-                } else {
-                    items(keepers) { entry ->
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(8.dp))
-                                .padding(12.dp),
+                            modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(entry.title, color = Color.White, fontSize = 14.sp, maxLines = 1)
-                                Text(entry.artist, color = Color.Gray, fontSize = 12.sp, maxLines = 1)
+                            Text("$playlistName Stats", style = MaterialTheme.typography.titleLarge, color = Color.White, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                            IconButton(onClick = onDismiss) {
+                                Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
                             }
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("${entry.count} Skips To", color = MaterialTheme.colorScheme.primary, fontSize = 14.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
                         }
                     }
-                }
 
-                item {
-                    Text("Track Weights & Skips", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
-                }
-
-                if (stats.isEmpty()) {
+                    // --- Section 1: Skipped To (Expandable Header) ---
                     item {
-                        Text("No tracks inside this playlist.", color = Color.Gray, fontSize = 14.sp)
-                    }
-                } else {
-                    items(stats) { stat ->
                         Card(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().clickable { isSkippedToExpanded = !isSkippedToExpanded },
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
                         ) {
-                            Column(modifier = Modifier.padding(12.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(14.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("Skipped To (${keepers.size})", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                                Icon(
+                                    imageVector = if (isSkippedToExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                    contentDescription = "Toggle Skipped To",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                    }
+
+                    if (isSkippedToExpanded) {
+                        if (keepers.isEmpty()) {
+                            item {
+                                Text("No skip-over destination events logged for this playlist.", color = Color.Gray, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 8.dp))
+                            }
+                        } else {
+                            items(keepers) { entry ->
                                 Row(
-                                    modifier = Modifier.fillMaxWidth(),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(8.dp))
+                                        .padding(12.dp),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text(stat.title, color = Color.White, fontSize = 14.sp, maxLines = 1, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
-                                        Text(stat.artist, color = Color.Gray, fontSize = 12.sp, maxLines = 1)
+                                        Text(entry.title, color = Color.White, fontSize = 14.sp, maxLines = 1)
+                                        Text(entry.artist, color = Color.Gray, fontSize = 12.sp, maxLines = 1)
                                     }
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Text("Skip: %.0f%%".format(Locale.US, stat.skipRate * 100), color = if (stat.skipRate > 0.5f) Color.Red else Color.Gray, fontSize = 14.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+                                    Text("${entry.count} Skips To", color = MaterialTheme.colorScheme.primary, fontSize = 14.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
                                 }
-                                
-                                Spacer(modifier = Modifier.height(8.dp))
-                                
-                                // Direct adjust slider
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text("Prob: %.2fx".format(Locale.US, stat.baseWeight), color = Color.LightGray, fontSize = 12.sp, modifier = Modifier.width(68.dp))
-                                    Slider(
-                                        value = stat.baseWeight,
-                                        onValueChange = { viewModel.updateSongWeight(stat.songId, it) },
-                                        valueRange = 0.1f..5.0f,
-                                        modifier = Modifier.weight(1f)
-                                    )
+                            }
+                        }
+                    }
+
+                    // --- Section 2: Track Weights & Skips (Expandable Header & Sorting) ---
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth().clickable { isWeightsExpanded = !isWeightsExpanded },
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(14.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("Track Weights & Skips (${stats.size})", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                                Icon(
+                                    imageVector = if (isWeightsExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                    contentDescription = "Toggle Track Weights",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                    }
+
+                    if (isWeightsExpanded) {
+                        item {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                FilterChip(
+                                    selected = activeSortCategory == 0,
+                                    onClick = {
+                                        if (activeSortCategory == 0) sortAscending = !sortAscending
+                                        else { activeSortCategory = 0; sortAscending = true }
+                                    },
+                                    label = {
+                                        Text("Order ${if (activeSortCategory == 0) (if (sortAscending) "↑" else "↓") else ""}", fontSize = 12.sp)
+                                    }
+                                )
+                                FilterChip(
+                                    selected = activeSortCategory == 1,
+                                    onClick = {
+                                        if (activeSortCategory == 1) sortAscending = !sortAscending
+                                        else { activeSortCategory = 1; sortAscending = true }
+                                    },
+                                    label = {
+                                        Text("Skipped ${if (activeSortCategory == 1) (if (sortAscending) "↓ (Most)" else "↑ (Least)") else ""}", fontSize = 12.sp)
+                                    }
+                                )
+                                FilterChip(
+                                    selected = activeSortCategory == 2,
+                                    onClick = {
+                                        if (activeSortCategory == 2) sortAscending = !sortAscending
+                                        else { activeSortCategory = 2; sortAscending = true }
+                                    },
+                                    label = {
+                                        Text("Weight ${if (activeSortCategory == 2) (if (sortAscending) "↓ (High)" else "↑ (Low)") else ""}", fontSize = 12.sp)
+                                    }
+                                )
+                            }
+                        }
+
+                        if (sortedStats.isEmpty()) {
+                            item {
+                                Text("No tracks inside this playlist.", color = Color.Gray, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 8.dp))
+                            }
+                        } else {
+                            items(sortedStats) { stat ->
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(stat.title, color = Color.White, fontSize = 14.sp, maxLines = 1, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+                                                Text(stat.artist, color = Color.Gray, fontSize = 12.sp, maxLines = 1)
+                                            }
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text("Skip: %.0f%%".format(Locale.US, stat.skipRate * 100), color = if (stat.skipRate > 0.5f) Color.Red else Color.Gray, fontSize = 14.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+                                        }
+                                        
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        
+                                        // Direct adjust slider
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text("Prob: %.2fx".format(Locale.US, stat.baseWeight), color = Color.LightGray, fontSize = 12.sp, modifier = Modifier.width(68.dp))
+                                            Slider(
+                                                value = stat.baseWeight,
+                                                onValueChange = { viewModel.updateSongWeight(stat.songId, it) },
+                                                valueRange = 0.1f..5.0f,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                        }
+                                    }
                                 }
+                            }
+                        }
+                    }
+
+                    item {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text("Reset Options", style = MaterialTheme.typography.titleMedium, color = Color.White, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick = { viewModel.resetPlaylistWeights(playlistId) },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB71C1C)),
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Text("Reset Weights (1.0x)", color = Color.White, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+                            }
+                            Button(
+                                onClick = { viewModel.resetPlaylistSkips(playlistId) },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB71C1C)),
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Text("Reset Skips Stats", color = Color.White, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+                            }
+                            Button(
+                                onClick = { viewModel.resetPlaylistSkippedTo(playlistId) },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB71C1C)),
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Text("Reset Skipped To History", color = Color.White, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
                             }
                         }
                     }
                 }
 
-                item {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Button(
-                        onClick = {
-                            viewModel.resetPlaylistStats(playlistId)
-                            onDismiss()
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB71C1C)),
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Text("Reset Playlist Stats & Weights", color = Color.White, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
-                    }
+                val playerManager by viewModel.playerManager.collectAsState()
+                val currentSong = playerManager?.currentPlayingSong?.collectAsState(null)?.value
+                if (currentSong != null) {
+                    MiniPlayer(song = currentSong, viewModel = viewModel)
                 }
             }
         }
@@ -2567,13 +2700,15 @@ fun SearchDetailDialog(
             modifier = Modifier.fillMaxSize(),
             color = MaterialTheme.colorScheme.background
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.SpaceBetween
-            ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.SpaceBetween
+                ) {
                 // Top bar
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -2733,9 +2868,14 @@ fun SearchDetailDialog(
                         }
                     }
                 }
+
+                if (currentSong != null) {
+                    MiniPlayer(song = currentSong, viewModel = viewModel)
+                }
             }
         }
     }
+}
 }
 
 @Composable
@@ -2743,6 +2883,8 @@ fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
     val queue by viewModel.currentQueueFlow.collectAsState()
     var displayQueue by remember(queue) { mutableStateOf(queue) }
     val activeIndex = viewModel.activeQueueIndex
+    val playerManager by viewModel.playerManager.collectAsState()
+    val currentSong = playerManager?.currentPlayingSong?.collectAsState(null)?.value
     val listState = rememberLazyListState()
     
     var draggedIndex by remember { mutableStateOf<Int?>(null) }
@@ -2786,7 +2928,8 @@ fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
             modifier = Modifier.fillMaxSize(),
             color = MaterialTheme.colorScheme.background
         ) {
-            Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                Column(modifier = Modifier.weight(1f).fillMaxWidth().padding(24.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -3093,6 +3236,11 @@ fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
                     }
                 }
             }
+
+            if (currentSong != null) {
+                MiniPlayer(song = currentSong, viewModel = viewModel)
+            }
         }
     }
+}
 }
