@@ -47,16 +47,44 @@
             </intent-filter>
         </service>
 
-        <!-- Home Screen Widget Receiver -->
+        <!-- Home Screen Widget Receivers -->
+        <!-- 4x1 Compact Bar Widget -->
         <receiver
             android:name=".widget.MusicAppWidgetProvider"
+            android:label="Music (4x1 Bar)"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>
             <meta-data
                 android:name="android.appwidget.provider"
-                android:resource="@xml/music_app_widget_info" />
+                android:resource="@xml/music_app_widget_4x1_info" />
+        </receiver>
+
+        <!-- 4x2 Expanded Card Widget -->
+        <receiver
+            android:name=".widget.MusicWidget4x2Provider"
+            android:label="Music (4x2 Card)"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/music_app_widget_4x2_info" />
+        </receiver>
+
+        <!-- Squircle Card Widget -->
+        <receiver
+            android:name=".widget.MusicWidgetSquircleProvider"
+            android:label="Music (Squircle)"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/music_app_widget_squircle_info" />
         </receiver>
 
     </application>

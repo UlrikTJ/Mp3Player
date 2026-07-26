@@ -49,6 +49,14 @@ android {
     }
 }
 
+androidComponents {
+    onVariants { variant ->
+        variant.outputs.forEach { output ->
+            output.outputFileName.set("Music.apk")
+        }
+    }
+}
+
 dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

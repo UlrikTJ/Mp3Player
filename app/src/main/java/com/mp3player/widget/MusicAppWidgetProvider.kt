@@ -14,7 +14,7 @@ import com.mp3player.data.entity.SongEntity
 import com.mp3player.playback.AudioService
 import java.io.File
 
-class MusicAppWidgetProvider : AppWidgetProvider() {
+abstract class BaseMusicWidgetProvider(private val layoutResId: Int) : AppWidgetProvider() {
 
     override fun onUpdate(
         context: Context,
@@ -22,26 +22,40 @@ class MusicAppWidgetProvider : AppWidgetProvider() {
         appWidgetIds: IntArray
     ) {
         super.onUpdate(context, appWidgetManager, appWidgetIds)
-        updateWidget(context, null, false)
+        MusicAppWidgetProvider.updateWidget(context, null, false)
     }
+}
 
+class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1) {
     companion object {
         fun updateWidget(context: Context, song: SongEntity?, isPlaying: Boolean) {
-            val appWidgetManager = AppWidgetManager.getInstance(context)
-            val componentName = ComponentName(context, MusicAppWidgetProvider::class.java)
-            val remoteViews = RemoteViews(context.packageName, R.layout.widget_music)
+            updateProvider(context, MusicAppWidgetProvider::class.java, R.layout.widget_music_4x1, song, isPlaying)
+            updateProvider(context, MusicWidget4x2Provider::class.java, R.layout.widget_music_4x2, song, isPlaying)
+            updateProvider(context, MusicWidgetSquircleProvider::class.java, R.layout.widget_music_squircle, song, isPlaying)
+        }
 
-            // Content text
-            val title = song?.title ?: "MP3 Player"
+        private fun updateProvider(
+            context: Context,
+            providerClass: Class<*>,
+            layoutResId: Int,
+            song: SongEntity?,
+            isPlaying: Boolean
+        ) {
+            val appWidgetManager = AppWidgetManager.getInstance(context)
+            val componentName = ComponentName(context, providerClass)
+            val appWidgetIds = appWidgetManager.getAppWidgetIds(componentName)
+            if (appWidgetIds.isEmpty()) return
+
+            val remoteViews = RemoteViews(context.packageName, layoutResId)
+
+            val title = song?.title ?: "Music"
             val artist = song?.artist ?: "Select a song to play"
             remoteViews.setTextViewText(R.id.widget_title, title)
             remoteViews.setTextViewText(R.id.widget_artist, artist)
 
-            // Play/Pause icon
             val playPauseIcon = if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play
             remoteViews.setImageViewResource(R.id.widget_btn_play_pause, playPauseIcon)
 
-            // Artwork Bitmap loading
             val artPath = song?.artworkPath
             var artLoaded = false
             if (!artPath.isNullOrEmpty()) {
@@ -59,7 +73,7 @@ class MusicAppWidgetProvider : AppWidgetProvider() {
                 }
             }
             if (!artLoaded) {
-                remoteViews.setImageViewResource(R.id.widget_album_art, android.R.drawable.ic_media_play)
+                remoteViews.setImageViewResource(R.id.widget_album_art, R.drawable.ic_music_note)
             }
 
             // Pending Intents for controls
@@ -87,7 +101,6 @@ class MusicAppWidgetProvider : AppWidgetProvider() {
             )
             remoteViews.setOnClickPendingIntent(R.id.widget_btn_next, nextPendingIntent)
 
-            // App click intent
             val appIntent = Intent(context, MainActivity::class.java)
             val appPendingIntent = PendingIntent.getActivity(
                 context, 0, appIntent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
@@ -98,3 +111,6 @@ class MusicAppWidgetProvider : AppWidgetProvider() {
         }
     }
 }
+
+class MusicWidget4x2Provider : BaseMusicWidgetProvider(R.layout.widget_music_4x2)
+class MusicWidgetSquircleProvider : BaseMusicWidgetProvider(R.layout.widget_music_squircle)
