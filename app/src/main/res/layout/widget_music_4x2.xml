@@ -63,8 +63,7 @@
                 android:layout_width="34dp"
                 android:layout_height="34dp"
                 android:background="?android:attr/selectableItemBackgroundBorderless"
-                android:src="@android:drawable/ic_menu_rotate"
-                android:tint="#808080"
+                android:src="@drawable/ic_widget_shuffle_off"
                 android:contentDescription="Shuffle" />
 
             <ImageButton
@@ -73,7 +72,6 @@
                 android:layout_height="36dp"
                 android:background="?android:attr/selectableItemBackgroundBorderless"
                 android:src="@android:drawable/ic_media_previous"
-                android:tint="#FFFFFF"
                 android:contentDescription="Previous" />
 
             <ImageButton
@@ -82,7 +80,6 @@
                 android:layout_height="44dp"
                 android:background="?android:attr/selectableItemBackgroundBorderless"
                 android:src="@android:drawable/ic_media_play"
-                android:tint="#1DB954"
                 android:contentDescription="Play/Pause" />
 
             <ImageButton
@@ -91,7 +88,6 @@
                 android:layout_height="36dp"
                 android:background="?android:attr/selectableItemBackgroundBorderless"
                 android:src="@android:drawable/ic_media_next"
-                android:tint="#FFFFFF"
                 android:contentDescription="Next" />
 
             <ImageButton
@@ -99,8 +95,7 @@
                 android:layout_width="34dp"
                 android:layout_height="34dp"
                 android:background="?android:attr/selectableItemBackgroundBorderless"
-                android:src="@android:drawable/ic_menu_revert"
-                android:tint="#808080"
+                android:src="@drawable/ic_widget_repeat_off"
                 android:contentDescription="Repeat" />
         </LinearLayout>
     </LinearLayout>

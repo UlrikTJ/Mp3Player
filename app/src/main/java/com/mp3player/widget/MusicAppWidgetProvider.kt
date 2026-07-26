@@ -61,10 +61,6 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
             remoteViews.setTextViewText(R.id.widget_title, title)
             remoteViews.setTextViewText(R.id.widget_artist, artist)
 
-            // Enable marquee scrolling on title and artist
-            remoteViews.setBoolean(R.id.widget_title, "setSelected", true)
-            remoteViews.setBoolean(R.id.widget_artist, "setSelected", true)
-
             val playPauseIcon = if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play
             remoteViews.setImageViewResource(R.id.widget_btn_play_pause, playPauseIcon)
 
@@ -88,13 +84,13 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
                 remoteViews.setImageViewResource(R.id.widget_album_art, R.drawable.ic_music_note)
             }
 
-            // Shuffle & Repeat active tints & intents for 4x2 widget
+            // Shuffle & Repeat active vector icons & intents for 4x2 widget
             if (layoutResId == R.layout.widget_music_4x2) {
-                val shuffleColor = if (isShuffleEnabled) 0xFF1DB954.toInt() else 0xFF808080.toInt()
-                remoteViews.setInt(R.id.widget_btn_shuffle, "setColorFilter", shuffleColor)
+                val shuffleRes = if (isShuffleEnabled) R.drawable.ic_widget_shuffle_on else R.drawable.ic_widget_shuffle_off
+                remoteViews.setImageViewResource(R.id.widget_btn_shuffle, shuffleRes)
 
-                val repeatColor = if (isRepeatEnabled) 0xFF1DB954.toInt() else 0xFF808080.toInt()
-                remoteViews.setInt(R.id.widget_btn_repeat, "setColorFilter", repeatColor)
+                val repeatRes = if (isRepeatEnabled) R.drawable.ic_widget_repeat_on else R.drawable.ic_widget_repeat_off
+                remoteViews.setImageViewResource(R.id.widget_btn_repeat, repeatRes)
 
                 val shuffleIntent = Intent(context, AudioService::class.java).apply {
                     action = AudioService.ACTION_TOGGLE_SHUFFLE
