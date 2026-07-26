@@ -755,8 +755,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
 
-            // Estimate duration (usually server handles metadata tagging, so we read it back or guess)
-            val durationMs = 240000L // 4-minute fallback or read via media extractor
+            val extractedDur = extractMediaDuration(mp3File.absolutePath)
+            val durationMs = if (extractedDur > 0) extractedDur else 0L
             
             SongEntity(
                 title = title,
@@ -992,6 +992,18 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun extractMediaDuration(filePath: String): Long {
+        return try {
+            val retriever = android.media.MediaMetadataRetriever()
+            retriever.setDataSource(filePath)
+            val time = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)
+            retriever.release()
+            time?.toLongOrNull() ?: 0L
+        } catch (e: Exception) {
+            0L
+        }
+    }
+
     fun dismissRestorePrompt() {
         showRestorePrompt = false
     }
@@ -1041,6 +1053,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     val artist = c.getString(artistCol) ?: "Unknown Artist"
                     val album = c.getString(albumCol) ?: "Unknown Album"
                     val duration = c.getLong(durationCol)
+                    val realDur = if (duration > 0) duration else extractMediaDuration(dataPath)
                     
                     val song = SongEntity(
                         title = title,
@@ -1048,7 +1061,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                         album = album,
                         filePath = dataPath,
                         artworkPath = null,
-                        durationMs = if (duration > 0) duration else 240000L,
+                        durationMs = realDur,
                         source = "LOCAL",
                         youtubeVideoId = null
                     )
@@ -1072,6 +1085,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                             val parts = rawName.split(" - ")
                             val title = if (parts.size > 1) parts[1].trim() else rawName
                             val artist = if (parts.size > 1) parts[0].trim() else "Downloaded Track"
+                            val realDur = extractMediaDuration(path)
                             
                             val song = SongEntity(
                                 title = title,
@@ -1079,7 +1093,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                                 album = "YouTube Downloads",
                                 filePath = path,
                                 artworkPath = null,
-                                durationMs = 240000L,
+                                durationMs = realDur,
                                 source = "LOCAL",
                                 youtubeVideoId = null
                             )

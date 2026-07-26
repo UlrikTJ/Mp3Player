@@ -52,14 +52,32 @@ class CrossfadePlayerManager(
     private val _currentPlayingSong = MutableStateFlow<SongEntity?>(null)
     val currentPlayingSong: StateFlow<SongEntity?> = _currentPlayingSong
 
+    private fun extractDurationFromFile(filePath: String): Long {
+        return try {
+            val retriever = android.media.MediaMetadataRetriever()
+            retriever.setDataSource(filePath)
+            val time = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)
+            retriever.release()
+            time?.toLongOrNull() ?: 0L
+        } catch (e: Exception) {
+            0L
+        }
+    }
+
     private fun getPlayerOrSongDuration(player: ExoPlayer, song: SongEntity?): Long {
         val dur = player.duration
         if (dur != C.TIME_UNSET && dur > 0 && dur <= MAX_SANE_DURATION_MS) {
             return dur
         }
-        val songDur = song?.durationMs ?: 0L
-        if (songDur > 0 && songDur <= MAX_SANE_DURATION_MS) {
-            return songDur
+        if (song != null) {
+            val songDur = song.durationMs
+            if (songDur > 0 && songDur != 240000L && songDur <= MAX_SANE_DURATION_MS) {
+                return songDur
+            }
+            val fileDur = extractDurationFromFile(song.filePath)
+            if (fileDur > 0 && fileDur <= MAX_SANE_DURATION_MS) {
+                return fileDur
+            }
         }
         return 0L
     }
@@ -67,10 +85,8 @@ class CrossfadePlayerManager(
     private val progressRunnable = object : Runnable {
         override fun run() {
             if (currentPlayer.isPlaying || isCrossfading) {
-                // If crossfading, report progress of incoming player (nextPlayer)
-                val activePlayer = if (isCrossfading) nextPlayer else currentPlayer
-                
-                val currentPosition = activePlayer.currentPosition
+                // UI title and progress remain on current song (currentPlayer) during crossfade
+                val currentPosition = currentPlayer.currentPosition
                 
                 // Clamp to sane values
                 val sanePosition = if (currentPosition < 0 || currentPosition > MAX_SANE_DURATION_MS) 0L else currentPosition
@@ -204,9 +220,7 @@ class CrossfadePlayerManager(
     }
 
     fun getDuration(): Long {
-        val activePlayer = if (isCrossfading) nextPlayer else currentPlayer
-        val activeSong = if (isCrossfading) nextSong else currentSong
-        return getPlayerOrSongDuration(activePlayer, activeSong)
+        return getPlayerOrSongDuration(currentPlayer, currentSong)
     }
 
     private fun startCrossfade() {
@@ -218,7 +232,7 @@ class CrossfadePlayerManager(
         isCrossfading = true
         _isCrossfadingFlow.value = true
         
-        // Prepare & start incoming song at 0:00
+        // Prepare & start incoming song at 0:00 underneath
         nextPlayer.stop()
         val mediaItem = MediaItem.fromUri(Uri.parse(incomingSong.filePath))
         nextPlayer.setMediaItem(mediaItem)
@@ -226,9 +240,6 @@ class CrossfadePlayerManager(
         nextPlayer.prepare()
         nextPlayer.seekTo(0L)
         nextPlayer.play()
-
-        _currentPlayingSong.value = incomingSong
-        onTrackStarted(incomingSong)
 
         val fadeSteps = 50
         val stepDuration = (crossfadeDurationMs / fadeSteps).coerceAtLeast(10L)
@@ -250,7 +261,7 @@ class CrossfadePlayerManager(
                 if (currentStep < fadeSteps) {
                     handler.postDelayed(this, stepDuration)
                 } else {
-                    // Crossfade complete
+                    // Crossfade complete: switch UI title and active player to incoming song (now at 0:05!)
                     currentPlayer.stop()
                     currentPlayer.volume = 1.0f
 
@@ -264,6 +275,8 @@ class CrossfadePlayerManager(
                     nextSong = null
                     isCrossfading = false
                     _isCrossfadingFlow.value = false
+
+                    onTrackStarted(incomingSong)
 
                     if (onCrossfadeCompleted != null) {
                         onCrossfadeCompleted.invoke(incomingSong)
