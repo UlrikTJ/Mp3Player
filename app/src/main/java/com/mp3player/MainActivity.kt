@@ -153,6 +153,12 @@ class MainActivity : ComponentActivity() {
             boundService.onTrackEndedListener = {
                 viewModel.onTrackEndedEvent()
             }
+            boundService.onCrossfadeCompletedListener = { song ->
+                viewModel.onCrossfadeCompletedEvent(song)
+            }
+            boundService.onPrepareNextSongListener = {
+                viewModel.getNextSongForQueuePublic()
+            }
             boundService.onSkipPreviousListener = {
                 viewModel.playPreviousSong()
             }
@@ -172,7 +178,16 @@ class MainActivity : ComponentActivity() {
 
         // Start and Bind Playback Service
         val intent = Intent(this, AudioService::class.java)
-        startService(intent)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+        } catch (e: Exception) {
+            // Handle BackgroundServiceStartNotAllowedException on Android 12+
+            e.printStackTrace()
+        }
         bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
 
         setContent {
@@ -2371,11 +2386,12 @@ fun FullPlayerDialog(song: SongEntity, viewModel: MusicViewModel, onDismiss: () 
                 Spacer(modifier = Modifier.height(16.dp))
 
                 // Progress Bar Slider
-                val progressRatio = if (duration > 0) progress.toFloat() / duration else 0f
+                val isSaneDuration = duration > 0 && duration < 24 * 60 * 60 * 1000L
+                val progressRatio = if (isSaneDuration) (progress.toFloat() / duration).coerceIn(0f, 1f) else 0f
                 Column(modifier = Modifier.fillMaxWidth()) {
                     Slider(
                         value = progressRatio,
-                        onValueChange = { playerManager.seekTo((it * duration).toLong()) },
+                        onValueChange = { if (isSaneDuration) playerManager.seekTo((it * duration).toLong()) },
                         colors = SliderDefaults.colors(
                             activeTrackColor = MaterialTheme.colorScheme.primary,
                             thumbColor = MaterialTheme.colorScheme.primary
@@ -2515,6 +2531,7 @@ fun FullPlayerDialog(song: SongEntity, viewModel: MusicViewModel, onDismiss: () 
 }
 
 private fun formatTime(ms: Long): String {
+    if (ms < 0) return "00:00"
     val totalSeconds = ms / 1000
     val minutes = totalSeconds / 60
     val seconds = totalSeconds % 60

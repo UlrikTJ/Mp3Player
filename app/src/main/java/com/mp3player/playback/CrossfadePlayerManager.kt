@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
@@ -16,7 +17,9 @@ import kotlin.math.min
 class CrossfadePlayerManager(
     private val context: Context,
     private val onTrackEnded: () -> Unit,
-    private val onTrackStarted: (SongEntity) -> Unit
+    private val onTrackStarted: (SongEntity) -> Unit,
+    private val onCrossfadeCompleted: ((SongEntity) -> Unit)? = null,
+    private val onPrepareNextSong: (() -> SongEntity?)? = null
 ) {
     // Two players for crossfading
     private var playerA: ExoPlayer = ExoPlayer.Builder(context).build()
@@ -26,10 +29,18 @@ class CrossfadePlayerManager(
     private var nextPlayer: ExoPlayer = playerB
     
     private var currentSong: SongEntity? = null
-    private var nextSong: SongEntity? = null
+    var nextSong: SongEntity? = null
+        private set
 
+    private val MAX_SANE_DURATION_MS = 24 * 60 * 60 * 1000L // 24 hours
+    
     private var crossfadeDurationMs: Long = 5000L // 5 seconds default
-    private var isCrossfading = false
+    var isCrossfading = false
+        private set
+
+    private val _isCrossfadingFlow = MutableStateFlow(false)
+    val isCrossfadingFlow: StateFlow<Boolean> = _isCrossfadingFlow
+
     private var handler = Handler(Looper.getMainLooper())
     
     private val _isPlaying = MutableStateFlow(false)
@@ -43,23 +54,35 @@ class CrossfadePlayerManager(
 
     private val progressRunnable = object : Runnable {
         override fun run() {
-            if (currentPlayer.isPlaying) {
-                val currentPosition = currentPlayer.currentPosition
-                val duration = currentPlayer.duration
-                _playbackProgress.value = currentPosition
+            if (currentPlayer.isPlaying || isCrossfading) {
+                // If crossfading, report progress of incoming player (nextPlayer)
+                val activePlayer = if (isCrossfading) nextPlayer else currentPlayer
                 
-                // Trigger crossfade if we have a next song, aren't crossfading yet, 
-                // and the remaining time is less than the crossfade duration.
-                if (nextSong != null && !isCrossfading && duration > 0 && (duration - currentPosition) <= crossfadeDurationMs) {
-                    startCrossfade()
+                val currentPosition = activePlayer.currentPosition
+                val duration = activePlayer.duration
+                
+                // Clamp to sane values
+                val sanePosition = if (currentPosition < 0 || currentPosition > MAX_SANE_DURATION_MS) 0L else currentPosition
+                _playbackProgress.value = sanePosition
+                
+                // Trigger crossfade logic based on player fading OUT
+                val fadeOutPosition = currentPlayer.currentPosition
+                val fadeOutDuration = currentPlayer.duration
+                
+                if (!isCrossfading && fadeOutDuration > 0 && (fadeOutDuration - fadeOutPosition) <= crossfadeDurationMs && (fadeOutDuration - fadeOutPosition) > 0) {
+                    val freshNext = onPrepareNextSong?.invoke() ?: nextSong
+                    if (freshNext != null) {
+                        nextSong = freshNext
+                        startCrossfade()
+                    }
                 }
                 
-                // End of track fallback (if crossfade is off or didn't trigger)
-                if (!currentPlayer.isPlaying && currentPosition >= duration && duration > 0) {
+                // End of track fallback
+                if (!currentPlayer.isPlaying && fadeOutPosition >= fadeOutDuration && fadeOutDuration > 0 && !isCrossfading) {
                     onTrackEnded()
                 }
             }
-            handler.postDelayed(this, 100)
+            handler.postDelayed(this, 200)
         }
     }
 
@@ -82,6 +105,13 @@ class CrossfadePlayerManager(
                     onTrackEnded()
                 }
             }
+
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                error.printStackTrace()
+                if (player === currentPlayer) {
+                    onTrackEnded()
+                }
+            }
         })
     }
 
@@ -90,14 +120,12 @@ class CrossfadePlayerManager(
     }
 
     fun play(song: SongEntity, nextSongToPrepare: SongEntity? = null) {
-        // If we are crossfading or already playing, we stop player operations gently
         if (isCrossfading) {
             cancelCrossfade()
         }
 
         val file = java.io.File(song.filePath)
         if (song.id > 0 && !file.exists()) {
-            // Song is local but file is missing (maybe just deleted)
             onTrackEnded()
             return
         }
@@ -105,16 +133,17 @@ class CrossfadePlayerManager(
         currentSong = song
         _currentPlayingSong.value = song
         nextSong = nextSongToPrepare
+        _playbackProgress.value = 0L
 
         currentPlayer.stop()
         val mediaItem = MediaItem.fromUri(Uri.parse(song.filePath))
         currentPlayer.setMediaItem(mediaItem)
         currentPlayer.volume = 1.0f
         currentPlayer.prepare()
+        currentPlayer.seekTo(0L)
         currentPlayer.play()
         onTrackStarted(song)
 
-        // Pre-buffer the next song on the backup player
         if (nextSongToPrepare != null) {
             prepareNextPlayer(nextSongToPrepare)
         }
@@ -124,7 +153,7 @@ class CrossfadePlayerManager(
         nextSong = song
         if (song != null && !isCrossfading) {
             prepareNextPlayer(song)
-        } else if (song == null) {
+        } else if (song == null && !isCrossfading) {
             nextPlayer.stop()
         }
     }
@@ -141,11 +170,17 @@ class CrossfadePlayerManager(
     }
 
     fun pause() {
+        if (isCrossfading) {
+            nextPlayer.pause()
+        }
         currentPlayer.pause()
         _isPlaying.value = false
     }
 
     fun resume() {
+        if (isCrossfading) {
+            nextPlayer.play()
+        }
         currentPlayer.play()
         _isPlaying.value = true
     }
@@ -158,20 +193,34 @@ class CrossfadePlayerManager(
     }
 
     fun getDuration(): Long {
-        return currentPlayer.duration
+        val activePlayer = if (isCrossfading) nextPlayer else currentPlayer
+        val duration = activePlayer.duration
+        return if (duration == C.TIME_UNSET || duration <= 0 || duration > MAX_SANE_DURATION_MS) 0L else duration
     }
 
     private fun startCrossfade() {
         val incomingSong = nextSong ?: return
-        isCrossfading = true
         
-        // Start playing the next song silently
+        val file = java.io.File(incomingSong.filePath)
+        if (incomingSong.id > 0 && !file.exists()) return
+
+        isCrossfading = true
+        _isCrossfadingFlow.value = true
+        
+        // Prepare & start incoming song at 0:00
+        nextPlayer.stop()
+        val mediaItem = MediaItem.fromUri(Uri.parse(incomingSong.filePath))
+        nextPlayer.setMediaItem(mediaItem)
         nextPlayer.volume = 0.0f
+        nextPlayer.prepare()
+        nextPlayer.seekTo(0L)
         nextPlayer.play()
+
+        _currentPlayingSong.value = incomingSong
         onTrackStarted(incomingSong)
 
         val fadeSteps = 50
-        val stepDuration = crossfadeDurationMs / fadeSteps
+        val stepDuration = (crossfadeDurationMs / fadeSteps).coerceAtLeast(10L)
         var currentStep = 0
 
         val crossfadeRunnable = object : Runnable {
@@ -179,9 +228,8 @@ class CrossfadePlayerManager(
                 if (!isCrossfading) return
                 
                 currentStep++
-                val ratio = currentStep.toFloat() / fadeSteps
+                val ratio = (currentStep.toFloat() / fadeSteps).coerceIn(0f, 1f)
                 
-                // Volume curve (S-Curve shape)
                 val inVolume = sinCurve(ratio)
                 val outVolume = sinCurve(1.0f - ratio)
 
@@ -193,7 +241,7 @@ class CrossfadePlayerManager(
                 } else {
                     // Crossfade complete
                     currentPlayer.stop()
-                    currentPlayer.volume = 1.0f // Reset volume to normal for next use
+                    currentPlayer.volume = 1.0f
 
                     // Swap player identities
                     val tempPlayer = currentPlayer
@@ -204,9 +252,13 @@ class CrossfadePlayerManager(
                     _currentPlayingSong.value = incomingSong
                     nextSong = null
                     isCrossfading = false
-                    
-                    // Callback to request the next track in queue and prepare it
-                    onTrackEnded()
+                    _isCrossfadingFlow.value = false
+
+                    if (onCrossfadeCompleted != null) {
+                        onCrossfadeCompleted.invoke(incomingSong)
+                    } else {
+                        onTrackEnded()
+                    }
                 }
             }
         }
@@ -215,13 +267,13 @@ class CrossfadePlayerManager(
 
     private fun cancelCrossfade() {
         isCrossfading = false
+        _isCrossfadingFlow.value = false
         nextPlayer.stop()
         nextPlayer.volume = 0.0f
         currentPlayer.volume = 1.0f
     }
 
     private fun sinCurve(ratio: Float): Float {
-        // Approximate an S-curve for smoother audio transitions
         return (Math.sin((ratio - 0.5) * Math.PI) / 2.0 + 0.5).toFloat()
     }
 

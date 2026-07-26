@@ -114,6 +114,7 @@ class PlaybackStatsTracker(
             } catch (e: Exception) {
                 // If the song was deleted from DB while playing, the Foreign Key constraint will fail.
                 // We catch this and ignore to avoid a crash.
+                // android.database.sqlite.SQLiteConstraintException is the typical culprit here.
                 e.printStackTrace()
             }
         }

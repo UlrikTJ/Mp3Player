@@ -36,6 +36,8 @@ class AudioService : Service() {
 
     var onTrackEndedListener: (() -> Unit)? = null
     var onTrackStartedListener: ((SongEntity) -> Unit)? = null
+    var onCrossfadeCompletedListener: ((SongEntity) -> Unit)? = null
+    var onPrepareNextSongListener: (() -> SongEntity?)? = null
     var onSkipPreviousListener: (() -> Unit)? = null
     var onToggleShuffleListener: (() -> Unit)? = null
 
@@ -60,6 +62,12 @@ class AudioService : Service() {
                 onTrackStartedListener?.invoke(song)
                 updateNotification(song, playerManager.isPlaying.value)
                 MusicAppWidgetProvider.updateWidget(this, song, playerManager.isPlaying.value)
+            },
+            onCrossfadeCompleted = { song ->
+                onCrossfadeCompletedListener?.invoke(song)
+            },
+            onPrepareNextSong = {
+                onPrepareNextSongListener?.invoke()
             }
         )
 
@@ -114,10 +122,16 @@ class AudioService : Service() {
             .setOngoing(true)
             .build()
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: Exception) {
+            // Android 12+ (S) / 14+ (U) restriction: Background apps cannot start foreground services.
+            e.printStackTrace()
+            // Notification will not be shown as foreground, service might be killed by OS soon.
         }
     }
 
@@ -215,21 +229,26 @@ class AudioService : Service() {
             val notification = builder.build()
 
             withContext(Dispatchers.Main) {
-                if (isPlaying) {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+                try {
+                    if (isPlaying) {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+                        } else {
+                            startForeground(NOTIFICATION_ID, notification)
+                        }
                     } else {
-                        startForeground(NOTIFICATION_ID, notification)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                            stopForeground(STOP_FOREGROUND_DETACH)
+                        } else {
+                            @Suppress("DEPRECATION")
+                            stopForeground(false)
+                        }
+                        val manager = getSystemService(NotificationManager::class.java)
+                        manager?.notify(NOTIFICATION_ID, notification)
                     }
-                } else {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                        stopForeground(STOP_FOREGROUND_DETACH)
-                    } else {
-                        @Suppress("DEPRECATION")
-                        stopForeground(false)
-                    }
-                    val manager = getSystemService(NotificationManager::class.java)
-                    manager?.notify(NOTIFICATION_ID, notification)
+                } catch (e: Exception) {
+                    // Handle ForegroundServiceStartNotAllowedException on Android 12+
+                    e.printStackTrace()
                 }
             }
         }
