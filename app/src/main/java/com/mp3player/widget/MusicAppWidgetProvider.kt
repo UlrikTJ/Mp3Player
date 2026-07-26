@@ -61,24 +61,23 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
             remoteViews.setTextViewText(R.id.widget_title, title)
             remoteViews.setTextViewText(R.id.widget_artist, artist)
 
+            // Enable marquee scrolling on title and artist
+            try {
+                remoteViews.setBoolean(R.id.widget_title, "setSelected", true)
+                remoteViews.setBoolean(R.id.widget_artist, "setSelected", true)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+
             val playPauseIcon = if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play
             remoteViews.setImageViewResource(R.id.widget_btn_play_pause, playPauseIcon)
 
             val artPath = song?.artworkPath
             var artLoaded = false
-            if (!artPath.isNullOrEmpty()) {
-                val file = File(artPath)
-                if (file.exists()) {
-                    try {
-                        val bitmap = BitmapFactory.decodeFile(file.absolutePath)
-                        if (bitmap != null) {
-                            remoteViews.setImageViewBitmap(R.id.widget_album_art, bitmap)
-                            artLoaded = true
-                        }
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                    }
-                }
+            val bitmap = loadScaledBitmap(context, artPath)
+            if (bitmap != null) {
+                remoteViews.setImageViewBitmap(R.id.widget_album_art, bitmap)
+                artLoaded = true
             }
             if (!artLoaded) {
                 remoteViews.setImageViewResource(R.id.widget_album_art, R.drawable.ic_music_note)
@@ -141,6 +140,32 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
             remoteViews.setOnClickPendingIntent(R.id.widget_root, appPendingIntent)
 
             appWidgetManager.updateAppWidget(componentName, remoteViews)
+        }
+
+        private fun loadScaledBitmap(context: Context, path: String?): android.graphics.Bitmap? {
+            if (path.isNullOrBlank()) return null
+            try {
+                if (path.startsWith("content://") || path.startsWith("file://")) {
+                    val uri = android.net.Uri.parse(path)
+                    context.contentResolver.openInputStream(uri)?.use { stream ->
+                        val options = BitmapFactory.Options().apply {
+                            inSampleSize = 2
+                        }
+                        return BitmapFactory.decodeStream(stream, null, options)
+                    }
+                } else {
+                    val file = File(path)
+                    if (file.exists()) {
+                        val options = BitmapFactory.Options().apply {
+                            inSampleSize = 2
+                        }
+                        return BitmapFactory.decodeFile(file.absolutePath, options)
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            return null
         }
     }
 }
