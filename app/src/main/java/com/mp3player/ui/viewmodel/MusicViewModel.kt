@@ -292,7 +292,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         val manager = _playerManager.value
         val currentPlaying = manager?.currentPlayingSong?.value
 
-        if (currentPlaying?.youtubeVideoId == dto.id && manager != null) {
+        if (manager != null && currentPlaying?.youtubeVideoId == dto.id) {
             if (manager.isPlaying.value) manager.pause() else manager.resume()
             return
         }
@@ -341,19 +341,38 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // --- Core Playback flow ---
-    // --- Core Playback flow ---
     fun playSongFromLibrary(song: SongEntity, playlistId: Int? = null) {
-        val manager = _playerManager.value
-        val isCross = manager?.isCrossfading ?: false
-        val songB = manager?.nextSong
+        viewModelScope.launch {
+            val candidateSongs = if (playlistId != null) {
+                withContext(Dispatchers.IO) { musicDao.getSongsForPlaylist(playlistId) }
+            } else {
+                allSongs.value
+            }
 
-        _playedSongIds.value = emptySet()
-        if (playlistId != null) {
-            viewModelScope.launch {
-                val playlistSongs = withContext(Dispatchers.IO) {
-                    musicDao.getSongsForPlaylist(playlistId)
+            if (candidateSongs.isEmpty()) return@launch
+
+            val manager = _playerManager.value
+            val isCross = manager?.isCrossfading ?: false
+            val songB = manager?.nextSong
+
+            _playedSongIds.value = emptySet()
+            userEnqueuedCount = 0
+
+            if (_useWeightedShuffle.value) {
+                val pool = candidateSongs.filter { it.id != song.id }
+                val generatedRemaining = generateShuffledQueueSequence(pool, limit = 49)
+                val fullQueue = mutableListOf<SongEntity>()
+                fullQueue.add(song)
+                if (isCross && songB != null && songB.id != song.id) {
+                    fullQueue.add(songB)
+                    fullQueue.addAll(generatedRemaining.filter { it.id != songB.id })
+                } else {
+                    fullQueue.addAll(generatedRemaining)
                 }
-                val queueList = playlistSongs.toMutableList()
+                _currentQueue.value = fullQueue
+                currentQueueIndex = 0
+            } else {
+                val queueList = candidateSongs.toMutableList()
                 if (isCross && songB != null && songB.id != song.id) {
                     queueList.removeAll { it.id == song.id || it.id == songB.id }
                     queueList.add(0, song)
@@ -367,29 +386,32 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 _currentQueue.value = queueList
                 currentQueueIndex = 0
-                playCurrentQueueIndex(playlistId)
             }
-        } else {
-            val all = allSongs.value.toMutableList()
-            if (isCross && songB != null && songB.id != song.id) {
-                all.removeAll { it.id == song.id || it.id == songB.id }
-                all.add(0, song)
-                all.add(1, songB)
-            } else {
-                val idx = all.indexOfFirst { it.id == song.id }
-                if (idx > 0) {
-                    val s = all.removeAt(idx)
-                    all.add(0, s)
-                }
-            }
-            _currentQueue.value = all
-            currentQueueIndex = 0
             playCurrentQueueIndex(playlistId)
         }
     }
 
+    private var userEnqueuedCount = 0
+
     fun addToQueue(song: SongEntity) {
-        _currentQueue.update { it + song }
+        val queue = _currentQueue.value.toMutableList()
+        if (queue.isEmpty()) {
+            _currentQueue.value = listOf(song)
+            currentQueueIndex = 0
+            userEnqueuedCount = 0
+            playCurrentQueueIndex(null)
+            return
+        }
+
+        val baseIndex = if (currentQueueIndex >= 0) currentQueueIndex else 0
+        val insertIndex = (baseIndex + userEnqueuedCount + 1).coerceIn(0, queue.size)
+        queue.add(insertIndex, song)
+        userEnqueuedCount++
+        _currentQueue.value = queue
+
+        if (insertIndex == baseIndex + 1) {
+            _playerManager.value?.setNextSong(song)
+        }
     }
 
     private fun playCurrentQueueIndex(playlistId: Int?) {
@@ -418,6 +440,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         if (idx != -1) {
             currentQueueIndex = idx
         }
+        if (userEnqueuedCount > 0) {
+            userEnqueuedCount--
+        }
         statsTracker.onTrackEnded(completed = true)
         statsTracker.onTrackStarted(incomingSong, selectedPlaylistId.value)
         if (incomingSong.id > 0) {
@@ -440,28 +465,55 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         playCurrentQueueIndex(selectedPlaylistId.value)
     }
 
-    fun toggleShuffleMode() {
-        val newMode = !_useWeightedShuffle.value
-        _useWeightedShuffle.value = newMode
-        sharedPrefs.edit().putBoolean("weighted_shuffle", newMode).apply()
+    fun generateShuffledQueueSequence(candidates: List<SongEntity>, limit: Int = 50): List<SongEntity> {
+        if (candidates.isEmpty()) return emptyList()
+        if (candidates.size == 1) return List(limit) { candidates[0] }
+
+        val result = mutableListOf<SongEntity>()
+        val statsMap = songStats.value.associateBy { it.songId }
+        val simulatedHistory = _playbackHistory.value.toMutableList()
+        var pool = candidates.toMutableList()
+
+        val targetCount = minOf(limit, 50)
+
+        for (i in 0 until targetCount) {
+            if (!_isLooping.value && pool.isEmpty()) {
+                pool = candidates.toMutableList()
+            }
+
+            val availableSongs = if (_isLooping.value) candidates else pool
+            val next = ShuffleEngine.selectNextSong(
+                songs = availableSongs,
+                statsMap = statsMap,
+                history = simulatedHistory,
+                cooldownFormula = _cooldownFormula.value,
+                useSkipPenalty = _useSkipPenalty.value,
+                useKeeperBonus = _useKeeperBonus.value
+            ) ?: availableSongs.randomOrNull() ?: break
+
+            result.add(next)
+            simulatedHistory.add(next.id)
+            if (!_isLooping.value) {
+                pool.removeAll { it.id == next.id }
+            }
+        }
+
+        return result
     }
 
     fun playAllShuffled() {
         val songs = allSongs.value
         if (songs.isNotEmpty()) {
-            _currentQueue.value = songs
             _playedSongIds.value = emptySet()
             sharedPrefs.edit().putBoolean("weighted_shuffle", true).apply()
             _useWeightedShuffle.value = true
-            val nextSong = getNextSongForQueuePublic()
-            if (nextSong != null) {
-                currentQueueIndex = songs.indexOfFirst { it.id == nextSong.id }.coerceAtLeast(0)
-                playCurrentQueueIndex(null)
-            }
+
+            val generatedQueue = generateShuffledQueueSequence(songs, limit = 50)
+            _currentQueue.value = generatedQueue
+            currentQueueIndex = 0
+            playCurrentQueueIndex(null)
         }
     }
-
-    private fun getNextSongForQueue(): SongEntity? = getNextSongForQueuePublic()
 
     fun getNextSongForQueuePublic(): SongEntity? {
         val queue = _currentQueue.value
@@ -567,10 +619,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun playNext() {
-        val manager = _playerManager.value
-        val isCross = manager?.isCrossfading ?: false
-        if (isCross) {
-            val crossfadingSong = manager?.nextSong
+        val manager = _playerManager.value ?: return
+        if (manager.isCrossfading) {
+            val crossfadingSong = manager.nextSong
             if (crossfadingSong != null) {
                 val queue = _currentQueue.value
                 val idx = queue.indexOfFirst { it.id == crossfadingSong.id }
@@ -701,26 +752,18 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             }
             if (songs.isNotEmpty()) {
                 _playedSongIds.value = emptySet()
-                _currentQueue.value = songs
+                userEnqueuedCount = 0
                 
                 if (shuffle) {
                     _useWeightedShuffle.value = true
                     sharedPrefs.edit().putBoolean("weighted_shuffle", true).apply()
-                    
-                    val statsMap = songStats.value.associateBy { it.songId }
-                    val nextSong = ShuffleEngine.selectNextSong(
-                        songs = songs,
-                        statsMap = statsMap,
-                        history = _playbackHistory.value,
-                        cooldownFormula = _cooldownFormula.value,
-                        useSkipPenalty = _useSkipPenalty.value,
-                        useKeeperBonus = _useKeeperBonus.value
-                    )
-                    currentQueueIndex = songs.indexOfFirst { it.id == nextSong?.id }
-                    if (currentQueueIndex < 0) currentQueueIndex = 0
+                    val generatedQueue = generateShuffledQueueSequence(songs, limit = 50)
+                    _currentQueue.value = generatedQueue
+                    currentQueueIndex = 0
                 } else {
                     _useWeightedShuffle.value = false
                     sharedPrefs.edit().putBoolean("weighted_shuffle", false).apply()
+                    _currentQueue.value = songs
                     currentQueueIndex = 0
                 }
                 
@@ -1240,7 +1283,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             }
             
             // Sync with music engine to ensure it doesn't try to crossfade into the deleted song
-            _playerManager.value?.setNextSong(getNextSongForQueue())
+            _playerManager.value?.setNextSong(getNextSongForQueuePublic())
         }
     }
 
@@ -1267,7 +1310,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
         
         // Ensure playback engine is synced if next track changed
-        _playerManager.value?.setNextSong(getNextSongForQueue())
+        _playerManager.value?.setNextSong(getNextSongForQueuePublic())
     }
 
     fun removeFromQueueAt(index: Int) {
@@ -1290,7 +1333,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 _playerManager.value?.pause()
             }
         }
-        _playerManager.value?.setNextSong(getNextSongForQueue())
+        _playerManager.value?.setNextSong(getNextSongForQueuePublic())
     }
 
     fun getSongsForPlaylistFlow(playlistId: Int): kotlinx.coroutines.flow.Flow<List<SongEntity>> {

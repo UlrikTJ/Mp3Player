@@ -12,6 +12,7 @@ import android.graphics.drawable.BitmapDrawable
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
+import android.support.v4.media.MediaMetadataCompat
 import android.support.v4.media.session.MediaSessionCompat
 import androidx.core.app.NotificationCompat
 import coil.ImageLoader
@@ -187,23 +188,68 @@ class AudioService : Service() {
             if (!song.artworkPath.isNullOrEmpty()) {
                 try {
                     val loader = ImageLoader(this@AudioService)
-                    val request = ImageRequest.Builder(this@AudioService)
-                        .data(song.artworkPath)
+                    val highResArtPath = if (song.artworkPath.contains("i.ytimg.com") || song.artworkPath.contains("ytimg.com")) {
+                        song.artworkPath.replace("/hqdefault.jpg", "/maxresdefault.jpg")
+                            .replace("/sddefault.jpg", "/maxresdefault.jpg")
+                            .replace("/mqdefault.jpg", "/maxresdefault.jpg")
+                            .replace("/default.jpg", "/maxresdefault.jpg")
+                    } else {
+                        song.artworkPath
+                    }
+
+                    var request = ImageRequest.Builder(this@AudioService)
+                        .data(highResArtPath)
+                        .size(1024, 1024)
                         .allowHardware(false)
                         .build()
-                    val result = loader.execute(request)
-                    val drawable = (result as? SuccessResult)?.drawable
+                    var result = loader.execute(request)
+                    var drawable = (result as? SuccessResult)?.drawable
+
+                    if (drawable == null && highResArtPath != song.artworkPath) {
+                        val sdPath = song.artworkPath.replace("/hqdefault.jpg", "/sddefault.jpg")
+                        request = ImageRequest.Builder(this@AudioService)
+                            .data(sdPath)
+                            .size(1024, 1024)
+                            .allowHardware(false)
+                            .build()
+                        result = loader.execute(request)
+                        drawable = (result as? SuccessResult)?.drawable
+
+                        if (drawable == null) {
+                            request = ImageRequest.Builder(this@AudioService)
+                                .data(song.artworkPath)
+                                .size(1024, 1024)
+                                .allowHardware(false)
+                                .build()
+                            result = loader.execute(request)
+                            drawable = (result as? SuccessResult)?.drawable
+                        }
+                    }
+
                     val original = (drawable as? BitmapDrawable)?.bitmap
                     
                     if (original != null && original.width > 0 && original.height > 0) {
-                        val targetHeight = (original.height * 0.70).toInt()
-                        val topOffset = original.height - targetHeight
+                        val targetHeight = (original.height * 0.70).toInt().coerceAtLeast(1)
+                        val topOffset = (original.height - targetHeight) / 2
                         largeIconBitmap = Bitmap.createBitmap(original, 0, topOffset, original.width, targetHeight)
                     }
                 } catch (e: Exception) {
                     e.printStackTrace()
                 }
             }
+
+            // Update MediaSession Metadata so System UI Media Controls use full-res HD artwork
+            val metadataBuilder = MediaMetadataCompat.Builder()
+                .putString(MediaMetadataCompat.METADATA_KEY_TITLE, song.title)
+                .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, song.artist)
+                .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, song.album)
+                .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, song.durationMs)
+
+            if (largeIconBitmap != null) {
+                metadataBuilder.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, largeIconBitmap)
+                metadataBuilder.putBitmap(MediaMetadataCompat.METADATA_KEY_ART, largeIconBitmap)
+            }
+            mediaSession.setMetadata(metadataBuilder.build())
 
             val builder = NotificationCompat.Builder(this@AudioService, CHANNEL_ID)
                 .setContentTitle(song.title)

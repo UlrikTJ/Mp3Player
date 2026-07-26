@@ -163,7 +163,7 @@ class MainActivity : ComponentActivity() {
                 viewModel.playPreviousSong()
             }
             boundService.onToggleShuffleListener = {
-                viewModel.toggleShuffleMode()
+                viewModel.toggleShuffle()
             }
         }
 
@@ -2847,7 +2847,7 @@ fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                             userScrollEnabled = draggedIndex == null
                         ) {
-                            itemsIndexed(displayQueue, key = { _, song -> song.instanceId }) { index, song ->
+                            itemsIndexed(displayQueue, key = { index, song -> "${index}_${song.id}_${song.instanceId}" }) { index, song ->
                                 val isActive = index == activeIndex
                                 val isDraggedItem = index == currentDraggedIndex
 
