@@ -2313,7 +2313,8 @@ fun FullPlayerDialog(song: SongEntity, viewModel: MusicViewModel, onDismiss: () 
     val playerManager = viewModel.playerManager.collectAsState().value ?: return
     val isPlaying by playerManager.isPlaying.collectAsState()
     val progress by playerManager.playbackProgress.collectAsState()
-    val duration = playerManager.getDuration()
+    val playerDuration = playerManager.getDuration()
+    val duration = if (playerDuration > 0) playerDuration else (song.durationMs.takeIf { it > 0 } ?: 0L)
     
     val isLooping by viewModel.isLooping.collectAsState()
     val useWeightedShuffle by viewModel.useWeightedShuffle.collectAsState()

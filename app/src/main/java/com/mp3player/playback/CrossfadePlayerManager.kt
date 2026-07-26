@@ -52,6 +52,18 @@ class CrossfadePlayerManager(
     private val _currentPlayingSong = MutableStateFlow<SongEntity?>(null)
     val currentPlayingSong: StateFlow<SongEntity?> = _currentPlayingSong
 
+    private fun getPlayerOrSongDuration(player: ExoPlayer, song: SongEntity?): Long {
+        val dur = player.duration
+        if (dur != C.TIME_UNSET && dur > 0 && dur <= MAX_SANE_DURATION_MS) {
+            return dur
+        }
+        val songDur = song?.durationMs ?: 0L
+        if (songDur > 0 && songDur <= MAX_SANE_DURATION_MS) {
+            return songDur
+        }
+        return 0L
+    }
+
     private val progressRunnable = object : Runnable {
         override fun run() {
             if (currentPlayer.isPlaying || isCrossfading) {
@@ -59,7 +71,6 @@ class CrossfadePlayerManager(
                 val activePlayer = if (isCrossfading) nextPlayer else currentPlayer
                 
                 val currentPosition = activePlayer.currentPosition
-                val duration = activePlayer.duration
                 
                 // Clamp to sane values
                 val sanePosition = if (currentPosition < 0 || currentPosition > MAX_SANE_DURATION_MS) 0L else currentPosition
@@ -67,7 +78,7 @@ class CrossfadePlayerManager(
                 
                 // Trigger crossfade logic based on player fading OUT
                 val fadeOutPosition = currentPlayer.currentPosition
-                val fadeOutDuration = currentPlayer.duration
+                val fadeOutDuration = getPlayerOrSongDuration(currentPlayer, currentSong)
                 
                 if (!isCrossfading && fadeOutDuration > 0 && (fadeOutDuration - fadeOutPosition) <= crossfadeDurationMs && (fadeOutDuration - fadeOutPosition) > 0) {
                     val freshNext = onPrepareNextSong?.invoke() ?: nextSong
@@ -194,8 +205,8 @@ class CrossfadePlayerManager(
 
     fun getDuration(): Long {
         val activePlayer = if (isCrossfading) nextPlayer else currentPlayer
-        val duration = activePlayer.duration
-        return if (duration == C.TIME_UNSET || duration <= 0 || duration > MAX_SANE_DURATION_MS) 0L else duration
+        val activeSong = if (isCrossfading) nextSong else currentSong
+        return getPlayerOrSongDuration(activePlayer, activeSong)
     }
 
     private fun startCrossfade() {
