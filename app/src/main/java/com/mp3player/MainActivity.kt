@@ -11,6 +11,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.viewModels
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.BorderStroke
@@ -24,6 +25,10 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
+import androidx.compose.ui.res.painterResource
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -222,7 +227,90 @@ fun AppTheme(content: @Composable () -> Unit) {
 }
 
 @Composable
+fun SplashScreen(onTimeout: () -> Unit) {
+    var startAnimation by remember { mutableStateOf(false) }
+    val alphaAnim by animateFloatAsState(
+        targetValue = if (startAnimation) 1f else 0f,
+        animationSpec = tween(durationMillis = 1000)
+    )
+    val scaleAnim by animateFloatAsState(
+        targetValue = if (startAnimation) 1f else 0.85f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy)
+    )
+
+    LaunchedEffect(Unit) {
+        startAnimation = true
+        delay(2000)
+        onTimeout()
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF0D0D12)),
+        contentAlignment = Alignment.Center
+    ) {
+        Image(
+            painter = painterResource(id = R.drawable.splash_art),
+            contentDescription = "Splash Art",
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    alpha = alphaAnim * 0.45f
+                    scaleX = scaleAnim
+                    scaleY = scaleAnim
+                },
+            contentScale = ContentScale.Crop
+        )
+
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+            modifier = Modifier.graphicsLayer {
+                alpha = alphaAnim
+                scaleX = scaleAnim
+                scaleY = scaleAnim
+            }
+        ) {
+            Image(
+                painter = painterResource(id = R.drawable.app_icon),
+                contentDescription = "App Logo",
+                modifier = Modifier
+                    .size(110.dp)
+                    .clip(RoundedCornerShape(24.dp))
+            )
+            Spacer(modifier = Modifier.height(20.dp))
+            Text(
+                text = "Music",
+                color = Color.White,
+                fontSize = 36.sp,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = "Your Ultimate Audio Player",
+                color = Color.Gray,
+                fontSize = 14.sp
+            )
+            Spacer(modifier = Modifier.height(32.dp))
+            CircularProgressIndicator(
+                color = MaterialTheme.colorScheme.primary,
+                strokeWidth = 3.dp,
+                modifier = Modifier.size(24.dp)
+            )
+        }
+    }
+}
+
+@Composable
 fun MainScreen(viewModel: MusicViewModel) {
+    var showSplash by remember { mutableStateOf(true) }
+
+    if (showSplash) {
+        SplashScreen(onTimeout = { showSplash = false })
+        return
+    }
+
     var selectedTab by remember { mutableIntStateOf(0) }
     val activePlaylistId by viewModel.selectedPlaylistId.collectAsState()
     val allPlaylists by viewModel.allPlaylists.collectAsState()
@@ -372,17 +460,33 @@ fun MiniPlayer(song: SongEntity, viewModel: MusicViewModel) {
         Spacer(modifier = Modifier.width(12.dp))
 
         Column(modifier = Modifier.weight(1f)) {
-            Text(song.title, color = Color.White, fontSize = 14.sp, maxLines = 1)
-            Text(song.artist, color = Color.Gray, fontSize = 12.sp, maxLines = 1)
+            Text(
+                text = song.title,
+                color = Color.White,
+                fontSize = 14.sp,
+                maxLines = 1,
+                modifier = Modifier.basicMarquee()
+            )
+            Text(
+                text = song.artist,
+                color = Color.Gray,
+                fontSize = 12.sp,
+                maxLines = 1,
+                modifier = Modifier.basicMarquee()
+            )
         }
 
-        IconButton(onClick = {
-            if (isPlaying) playerManager.pause() else playerManager.resume()
-        }) {
+        IconButton(
+            onClick = {
+                if (isPlaying) playerManager.pause() else playerManager.resume()
+            },
+            modifier = Modifier.size(44.dp)
+        ) {
             Icon(
                 imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                 contentDescription = "Play/Pause",
-                tint = Color.White
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(32.dp)
             )
         }
         
@@ -2512,9 +2616,9 @@ fun FullPlayerDialog(song: SongEntity, viewModel: MusicViewModel, onDismiss: () 
                 Spacer(modifier = Modifier.height(24.dp))
 
                 // Song Title & Artist info
-                Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
-                    Text(song.title, color = Color.White, fontSize = 24.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, maxLines = 1)
-                    Text(song.artist, color = Color.Gray, fontSize = 16.sp, maxLines = 1)
+                Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(song.title, color = Color.White, fontSize = 24.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, maxLines = 1, modifier = Modifier.basicMarquee())
+                    Text(song.artist, color = Color.Gray, fontSize = 16.sp, maxLines = 1, modifier = Modifier.basicMarquee())
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))

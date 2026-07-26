@@ -19,6 +19,7 @@ import coil.ImageLoader
 import coil.request.ImageRequest
 import coil.request.SuccessResult
 import com.mp3player.MainActivity
+import com.mp3player.R
 import com.mp3player.data.entity.SongEntity
 import com.mp3player.widget.MusicAppWidgetProvider
 import kotlinx.coroutines.CoroutineScope
@@ -119,7 +120,7 @@ class AudioService : Service() {
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("MP3 Player")
             .setContentText("Initializing player...")
-            .setSmallIcon(android.R.drawable.ic_media_play)
+            .setSmallIcon(R.drawable.ic_music_note)
             .setOngoing(true)
             .build()
 
@@ -254,7 +255,7 @@ class AudioService : Service() {
             val builder = NotificationCompat.Builder(this@AudioService, CHANNEL_ID)
                 .setContentTitle(song.title)
                 .setContentText(song.artist)
-                .setSmallIcon(android.R.drawable.ic_media_play)
+                .setSmallIcon(R.drawable.ic_music_note)
                 .setContentIntent(pendingIntent)
                 .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
                 .setOngoing(isPlaying)
