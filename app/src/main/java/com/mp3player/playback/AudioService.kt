@@ -196,7 +196,7 @@ class AudioService : Service() {
                 }
                 playerManager.currentPlayingSong.value?.let { song ->
                     updateNotification(song, nextState)
-                    MusicAppWidgetProvider.updateWidget(this, song, nextState)
+                    updateWidgetFromService(song, nextState, playerManager.playbackProgress.value)
                 }
             }
             ACTION_SKIP_NEXT -> {

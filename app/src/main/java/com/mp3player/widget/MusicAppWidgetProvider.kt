@@ -82,14 +82,15 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
                 val playPauseIcon = if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play
                 remoteViews.setImageViewResource(R.id.widget_btn_play_pause, playPauseIcon)
 
-                // High-Quality Thumbnail Artwork Loading
+                // High-Quality Thumbnail Artwork Loading (Cropped to exact 1:1 square to eliminate sidebars)
                 val artPath = song?.artworkPath
                 var artLoaded = false
                 if (artPath != null && artPath.isNotBlank()) {
                     val rawBitmap = artworkBitmap ?: loadScaledBitmap(context, artPath)
                     if (rawBitmap != null && !rawBitmap.isRecycled) {
                         try {
-                            val scaled = Bitmap.createScaledBitmap(rawBitmap, 360, 360, true)
+                            val squared = cropToSquare(rawBitmap)
+                            val scaled = Bitmap.createScaledBitmap(squared, 360, 360, true)
                             remoteViews.setImageViewBitmap(R.id.widget_album_art, scaled)
                             artLoaded = true
                         } catch (e: Exception) {
@@ -124,25 +125,11 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
                     val progress = if (duration > 0) ((progressMs.toFloat() / duration) * 1000).toInt() else 0
                     remoteViews.setProgressBar(R.id.widget_progress_bar, 1000, progress, false)
 
-                    // Active playlist artwork slot
-                    val playlistArtSong = song ?: recentSongs.firstOrNull()
-                    if (playlistArtSong != null && !playlistArtSong.artworkPath.isNullOrBlank()) {
-                        val playlistBmp = loadScaledBitmap(context, playlistArtSong.artworkPath)
-                        if (playlistBmp != null && !playlistBmp.isRecycled) {
-                            try {
-                                val miniScaled = Bitmap.createScaledBitmap(playlistBmp, 120, 120, true)
-                                remoteViews.setImageViewBitmap(R.id.widget_recent_playlist_art, miniScaled)
-                            } catch (e: Exception) {
-                                remoteViews.setImageViewResource(R.id.widget_recent_playlist_art, R.drawable.ic_music_note)
-                            }
-                        } else {
-                            remoteViews.setImageViewResource(R.id.widget_recent_playlist_art, R.drawable.ic_music_note)
-                        }
-                    } else {
-                        remoteViews.setImageViewResource(R.id.widget_recent_playlist_art, R.drawable.ic_music_note)
-                    }
+                    // Active playlist collage thumbnail slot (2x2 grid collage)
+                    val collageBmp = createPlaylistCollageBitmap(context, recentSongs, song)
+                    remoteViews.setImageViewBitmap(R.id.widget_recent_playlist_art, collageBmp)
 
-                    // Recently played thumbnails in bottom row
+                    // Recently played thumbnails in bottom row (1:1 square cropped)
                     val slotIds = intArrayOf(
                         R.id.widget_recent_1,
                         R.id.widget_recent_2,
@@ -155,7 +142,8 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
                             val bmp = loadScaledBitmap(context, recentSong.artworkPath)
                             if (bmp != null && !bmp.isRecycled) {
                                 try {
-                                    val miniScaled = Bitmap.createScaledBitmap(bmp, 120, 120, true)
+                                    val squared = cropToSquare(bmp)
+                                    val miniScaled = Bitmap.createScaledBitmap(squared, 140, 140, true)
                                     remoteViews.setImageViewBitmap(slotIds[i], miniScaled)
                                 } catch (e: Exception) {
                                     remoteViews.setImageViewResource(slotIds[i], R.drawable.ic_music_note)
@@ -196,6 +184,45 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
                 // Catch any RemoteViews exception to prevent widget from crashing
                 e.printStackTrace()
             }
+        }
+
+        private fun cropToSquare(bitmap: Bitmap): Bitmap {
+            val size = minOf(bitmap.width, bitmap.height)
+            val x = (bitmap.width - size) / 2
+            val y = (bitmap.height - size) / 2
+            return Bitmap.createBitmap(bitmap, x, y, size, size)
+        }
+
+        private fun createPlaylistCollageBitmap(context: Context, recentSongs: List<SongEntity>, currentSong: SongEntity?): Bitmap {
+            val allSongs = mutableListOf<SongEntity>()
+            currentSong?.let { allSongs.add(it) }
+            allSongs.addAll(recentSongs)
+            
+            val artworkPaths = allSongs.mapNotNull { it.artworkPath }.filter { it.isNotBlank() }.distinct().take(4)
+            val bitmaps = artworkPaths.mapNotNull { path ->
+                loadScaledBitmap(context, path)?.let { cropToSquare(it) }
+            }
+
+            if (bitmaps.size >= 4) {
+                val collage = Bitmap.createBitmap(160, 160, Bitmap.Config.ARGB_8888)
+                val canvas = android.graphics.Canvas(collage)
+                val mini1 = Bitmap.createScaledBitmap(bitmaps[0], 80, 80, true)
+                val mini2 = Bitmap.createScaledBitmap(bitmaps[1], 80, 80, true)
+                val mini3 = Bitmap.createScaledBitmap(bitmaps[2], 80, 80, true)
+                val mini4 = Bitmap.createScaledBitmap(bitmaps[3], 80, 80, true)
+                canvas.drawBitmap(mini1, 0f, 0f, null)
+                canvas.drawBitmap(mini2, 80f, 0f, null)
+                canvas.drawBitmap(mini3, 0f, 80f, null)
+                canvas.drawBitmap(mini4, 80f, 80f, null)
+                return collage
+            } else if (bitmaps.isNotEmpty()) {
+                val square = cropToSquare(bitmaps[0])
+                return Bitmap.createScaledBitmap(square, 160, 160, true)
+            }
+
+            val defaultBitmap = Bitmap.createBitmap(160, 160, Bitmap.Config.ARGB_8888)
+            defaultBitmap.eraseColor(android.graphics.Color.DKGRAY)
+            return defaultBitmap
         }
 
         private fun loadScaledBitmap(context: Context, path: String?): Bitmap? {

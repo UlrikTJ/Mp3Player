@@ -250,7 +250,43 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         _useWeightedShuffle.value = newValue
         sharedPrefs.edit().putBoolean("weighted_shuffle", newValue).apply()
         _playedSongIds.value = emptySet()
-        updateWidgets()
+        
+        val currentSong = _playerManager.value?.currentPlayingSong?.value
+        if (currentSong != null) {
+            val activePId = _activePlaylistId.value
+            viewModelScope.launch {
+                val candidateSongs = if (activePId != null) {
+                    withContext(Dispatchers.IO) { musicDao.getSongsForPlaylist(activePId) }
+                } else {
+                    allSongs.value
+                }
+                if (candidateSongs.isNotEmpty()) {
+                    if (newValue) {
+                        // Shuffle ON: generate shuffled sequence starting from current song
+                        val pool = candidateSongs.filter { it.id != currentSong.id }
+                        val shuffledSeq = generateShuffledQueueSequence(pool, limit = 49)
+                        val newQueue = mutableListOf<SongEntity>()
+                        newQueue.add(currentSong)
+                        newQueue.addAll(shuffledSeq)
+                        _currentQueue.value = newQueue
+                        currentQueueIndex = 0
+                    } else {
+                        // Shuffle OFF: unshuffle queue to sequential order starting from current song
+                        val songIdx = candidateSongs.indexOfFirst { it.id == currentSong.id }
+                        if (songIdx >= 0) {
+                            val reordered = candidateSongs.subList(songIdx, candidateSongs.size) +
+                                candidateSongs.subList(0, songIdx)
+                            _currentQueue.value = reordered
+                            currentQueueIndex = 0
+                        }
+                    }
+                    _playerManager.value?.setNextSong(getNextSongForQueuePublic())
+                }
+                updateWidgets()
+            }
+        } else {
+            updateWidgets()
+        }
     }
 
     fun updateCooldownFormula(formula: String) {

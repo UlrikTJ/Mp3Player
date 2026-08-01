@@ -1472,6 +1472,7 @@ fun PlaylistDetailView(
     val addSongsList by viewModel.songsNotInPlaylist.collectAsState()
     val playerManager by viewModel.playerManager.collectAsState()
     val isPlaying = playerManager?.isPlaying?.collectAsState(false)?.value ?: false
+    val currentSong = playerManager?.currentPlayingSong?.collectAsState(null)?.value
     val playlistStatsForCover by viewModel.playlistStats.collectAsState()
     
     var showAddSongsDialog by remember { mutableStateOf(false) }
@@ -1815,6 +1816,8 @@ fun PlaylistDetailView(
                                     label = "playlistReorderTranslation"
                                 )
 
+                                val isTrackActive = currentSong != null && song.id == currentSong.id
+
                                 Card(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -1822,8 +1825,14 @@ fun PlaylistDetailView(
                                             translationY = if (currentDraggedIndex != null) animatedY else 0f
                                             alpha = if (isDraggedItem) 0.25f else 1.0f
                                         },
-                                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                                    elevation = CardDefaults.cardElevation(defaultElevation = if (isTrackActive) 2.dp else 0.dp),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = if (isTrackActive)
+                                            MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                        else
+                                            MaterialTheme.colorScheme.surface
+                                    ),
+                                    border = if (isTrackActive) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null
                                 ) {
                                     Row(
                                         modifier = Modifier
@@ -1901,12 +1910,17 @@ fun PlaylistDetailView(
                                         Column(modifier = Modifier.weight(1f)) {
                                             Text(
                                                 song.title, 
-                                                color = Color.White, 
+                                                color = if (isTrackActive) MaterialTheme.colorScheme.primary else Color.White, 
                                                 fontSize = 15.sp, 
                                                 maxLines = 1,
-                                                fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
+                                                fontWeight = if (isTrackActive) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.SemiBold
                                             )
                                             Text(song.artist, color = Color.Gray, fontSize = 13.sp, maxLines = 1)
+                                        }
+                                        
+                                        if (isTrackActive) {
+                                            Text("Playing", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                                            Spacer(modifier = Modifier.width(4.dp))
                                         }
                                         
                                         if (isEditMode) {
