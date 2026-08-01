@@ -129,8 +129,9 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
                     remoteViews.setProgressBar(R.id.widget_progress_bar, 1000, progress, false)
 
                     // Active playlist collage thumbnail slot (pure 3x3 grid collage of playlist songs)
-                    val collageBmp = createPlaylistCollageBitmap(context, playlistSongs)
+                    val collageBmp = createPlaylistCollageBitmap(context, playlistSongs, recentSongs)
                     remoteViews.setImageViewBitmap(R.id.widget_recent_playlist_art, collageBmp)
+
 
                     // Upcoming / Top 6 songs thumbnails in bottom row (1:1 square cropped with rounded corners and 1-tap play intent)
                     val slotIds = intArrayOf(
@@ -222,11 +223,13 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
             return output
         }
 
-        private fun createPlaylistCollageBitmap(context: Context, playlistSongs: List<SongEntity>): Bitmap {
-            val artworkPaths = playlistSongs.mapNotNull { it.artworkPath }.filter { it.isNotBlank() }.distinct().take(9)
+        private fun createPlaylistCollageBitmap(context: Context, playlistSongs: List<SongEntity>, fallbackSongs: List<SongEntity> = emptyList()): Bitmap {
+            val sourceSongs = if (playlistSongs.any { !it.artworkPath.isNullOrBlank() }) playlistSongs else fallbackSongs
+            val artworkPaths = sourceSongs.mapNotNull { it.artworkPath }.filter { it.isNotBlank() }.distinct().take(9)
             val bitmaps = artworkPaths.mapNotNull { path ->
                 loadScaledBitmap(context, path)?.let { cropToSquare(it) }
             }
+
 
             val size = 180
             if (bitmaps.size >= 5) {

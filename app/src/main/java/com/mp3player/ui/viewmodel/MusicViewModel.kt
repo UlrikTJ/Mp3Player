@@ -214,6 +214,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     init {
         statsTracker.onSessionStarted()
 
+        // Automatically push widget updates whenever upcoming songs, active playlist, or current track update
+        viewModelScope.launch {
+            combine(upcomingOrTopSongs, activePlaylistSongs, currentPlayingSong) { _, _, _ -> }.collect {
+                updateWidgets()
+            }
+        }
+
         // Periodic check for missing artworks
         viewModelScope.launch {
             while (true) {
@@ -225,6 +232,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
+
 
     fun setPlayerManager(manager: CrossfadePlayerManager) {
         _playerManager.value = manager
@@ -263,16 +271,21 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateWidgets() {
-        val song = _playerManager.value?.currentPlayingSong?.value
+        val song = currentPlayingSong.value
         val isPlaying = _playerManager.value?.isPlaying?.value ?: false
+        val progressMs = _playerManager.value?.playbackProgress?.value ?: 0L
         com.mp3player.widget.MusicAppWidgetProvider.updateWidget(
-            getApplication(),
-            song,
-            isPlaying,
-            _useWeightedShuffle.value,
-            _isLooping.value
+            context = getApplication(),
+            song = song,
+            isPlaying = isPlaying,
+            isShuffleEnabled = _useWeightedShuffle.value,
+            isRepeatEnabled = _isLooping.value,
+            progressMs = progressMs,
+            recentSongs = upcomingOrTopSongs.value,
+            playlistSongs = activePlaylistSongs.value
         )
     }
+
 
     fun toggleLooping() {
         val newValue = !_isLooping.value
