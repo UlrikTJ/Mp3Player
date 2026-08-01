@@ -6,7 +6,9 @@ import android.appwidget.AppWidgetProvider
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.os.Build
 import android.widget.RemoteViews
 import com.mp3player.MainActivity
 import com.mp3player.R
@@ -33,11 +35,23 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
             song: SongEntity?,
             isPlaying: Boolean,
             isShuffleEnabled: Boolean = false,
-            isRepeatEnabled: Boolean = false
+            isRepeatEnabled: Boolean = false,
+            artworkBitmap: Bitmap? = null,
+            progressMs: Long = 0L,
+            recentSongs: List<SongEntity> = emptyList()
         ) {
-            updateProvider(context, MusicAppWidgetProvider::class.java, R.layout.widget_music_4x1, song, isPlaying, isShuffleEnabled, isRepeatEnabled)
-            updateProvider(context, MusicWidget4x2Provider::class.java, R.layout.widget_music_4x2, song, isPlaying, isShuffleEnabled, isRepeatEnabled)
-            updateProvider(context, MusicWidgetSquircleProvider::class.java, R.layout.widget_music_squircle, song, isPlaying, isShuffleEnabled, isRepeatEnabled)
+            updateProvider(context, MusicAppWidgetProvider::class.java, R.layout.widget_music_4x1, song, isPlaying, isShuffleEnabled, isRepeatEnabled, artworkBitmap, progressMs, recentSongs)
+            updateProvider(context, MusicWidget4x2Provider::class.java, R.layout.widget_music_4x2, song, isPlaying, isShuffleEnabled, isRepeatEnabled, artworkBitmap, progressMs, recentSongs)
+            updateProvider(context, MusicWidgetSquircleProvider::class.java, R.layout.widget_music_squircle, song, isPlaying, isShuffleEnabled, isRepeatEnabled, artworkBitmap, progressMs, recentSongs)
+        }
+
+        private fun getServicePendingIntent(context: Context, requestCode: Int, intent: Intent): PendingIntent {
+            val flags = PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                PendingIntent.getForegroundService(context, requestCode, intent, flags)
+            } else {
+                PendingIntent.getService(context, requestCode, intent, flags)
+            }
         }
 
         private fun updateProvider(
@@ -47,105 +61,169 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
             song: SongEntity?,
             isPlaying: Boolean,
             isShuffleEnabled: Boolean,
-            isRepeatEnabled: Boolean
+            isRepeatEnabled: Boolean,
+            artworkBitmap: Bitmap?,
+            progressMs: Long,
+            recentSongs: List<SongEntity> = emptyList()
         ) {
             val appWidgetManager = AppWidgetManager.getInstance(context)
             val componentName = ComponentName(context, providerClass)
             val appWidgetIds = appWidgetManager.getAppWidgetIds(componentName)
             if (appWidgetIds.isEmpty()) return
 
-            val remoteViews = RemoteViews(context.packageName, layoutResId)
-
-            val title = song?.title ?: "Music"
-            val artist = song?.artist ?: "Select a song to play"
-            remoteViews.setTextViewText(R.id.widget_title, title)
-            remoteViews.setTextViewText(R.id.widget_artist, artist)
-
-            // Enable marquee scrolling on title and artist
             try {
-                remoteViews.setBoolean(R.id.widget_title, "setSelected", true)
-                remoteViews.setBoolean(R.id.widget_artist, "setSelected", true)
+                val remoteViews = RemoteViews(context.packageName, layoutResId)
+
+                val title = song?.title ?: "Music"
+                val artist = song?.artist ?: "Tap to play your music"
+                remoteViews.setTextViewText(R.id.widget_title, title)
+                remoteViews.setTextViewText(R.id.widget_artist, artist)
+
+                val playPauseIcon = if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play
+                remoteViews.setImageViewResource(R.id.widget_btn_play_pause, playPauseIcon)
+
+                // High-Quality Thumbnail Artwork Loading
+                val artPath = song?.artworkPath
+                var artLoaded = false
+                if (artPath != null && artPath.isNotBlank()) {
+                    val rawBitmap = artworkBitmap ?: loadScaledBitmap(context, artPath)
+                    if (rawBitmap != null && !rawBitmap.isRecycled) {
+                        try {
+                            val scaled = Bitmap.createScaledBitmap(rawBitmap, 360, 360, true)
+                            remoteViews.setImageViewBitmap(R.id.widget_album_art, scaled)
+                            artLoaded = true
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                    }
+                }
+                if (!artLoaded) {
+                    remoteViews.setImageViewResource(R.id.widget_album_art, R.drawable.ic_music_note)
+                }
+
+                // Shuffle & Repeat active vector icons & intents for 4x2 widget
+                if (layoutResId == R.layout.widget_music_4x2) {
+                    val shuffleRes = if (isShuffleEnabled) R.drawable.ic_widget_shuffle_on else R.drawable.ic_widget_shuffle_off
+                    remoteViews.setImageViewResource(R.id.widget_btn_shuffle, shuffleRes)
+
+                    val repeatRes = if (isRepeatEnabled) R.drawable.ic_widget_repeat_on else R.drawable.ic_widget_repeat_off
+                    remoteViews.setImageViewResource(R.id.widget_btn_repeat, repeatRes)
+
+                    val shuffleIntent = Intent(context, AudioService::class.java).apply {
+                        action = AudioService.ACTION_TOGGLE_SHUFFLE
+                    }
+                    remoteViews.setOnClickPendingIntent(R.id.widget_btn_shuffle, getServicePendingIntent(context, 13, shuffleIntent))
+
+                    val repeatIntent = Intent(context, AudioService::class.java).apply {
+                        action = AudioService.ACTION_TOGGLE_REPEAT
+                    }
+                    remoteViews.setOnClickPendingIntent(R.id.widget_btn_repeat, getServicePendingIntent(context, 14, repeatIntent))
+
+                    // Progress update
+                    val duration = song?.durationMs ?: 0L
+                    val progress = if (duration > 0) ((progressMs.toFloat() / duration) * 1000).toInt() else 0
+                    remoteViews.setProgressBar(R.id.widget_progress_bar, 1000, progress, false)
+
+                    // Active playlist artwork slot
+                    val playlistArtSong = song ?: recentSongs.firstOrNull()
+                    if (playlistArtSong != null && !playlistArtSong.artworkPath.isNullOrBlank()) {
+                        val playlistBmp = loadScaledBitmap(context, playlistArtSong.artworkPath)
+                        if (playlistBmp != null && !playlistBmp.isRecycled) {
+                            try {
+                                val miniScaled = Bitmap.createScaledBitmap(playlistBmp, 120, 120, true)
+                                remoteViews.setImageViewBitmap(R.id.widget_recent_playlist_art, miniScaled)
+                            } catch (e: Exception) {
+                                remoteViews.setImageViewResource(R.id.widget_recent_playlist_art, R.drawable.ic_music_note)
+                            }
+                        } else {
+                            remoteViews.setImageViewResource(R.id.widget_recent_playlist_art, R.drawable.ic_music_note)
+                        }
+                    } else {
+                        remoteViews.setImageViewResource(R.id.widget_recent_playlist_art, R.drawable.ic_music_note)
+                    }
+
+                    // Recently played thumbnails in bottom row
+                    val slotIds = intArrayOf(
+                        R.id.widget_recent_1,
+                        R.id.widget_recent_2,
+                        R.id.widget_recent_3,
+                        R.id.widget_recent_4
+                    )
+                    for (i in slotIds.indices) {
+                        val recentSong = recentSongs.getOrNull(i)
+                        if (recentSong != null && !recentSong.artworkPath.isNullOrBlank()) {
+                            val bmp = loadScaledBitmap(context, recentSong.artworkPath)
+                            if (bmp != null && !bmp.isRecycled) {
+                                try {
+                                    val miniScaled = Bitmap.createScaledBitmap(bmp, 120, 120, true)
+                                    remoteViews.setImageViewBitmap(slotIds[i], miniScaled)
+                                } catch (e: Exception) {
+                                    remoteViews.setImageViewResource(slotIds[i], R.drawable.ic_music_note)
+                                }
+                            } else {
+                                remoteViews.setImageViewResource(slotIds[i], R.drawable.ic_music_note)
+                            }
+                        } else {
+                            remoteViews.setImageViewResource(slotIds[i], R.drawable.ic_music_note)
+                        }
+                    }
+                }
+
+                // PendingIntents for standard controls
+                val prevIntent = Intent(context, AudioService::class.java).apply {
+                    action = AudioService.ACTION_SKIP_PREVIOUS
+                }
+                remoteViews.setOnClickPendingIntent(R.id.widget_btn_previous, getServicePendingIntent(context, 10, prevIntent))
+
+                val playPauseIntent = Intent(context, AudioService::class.java).apply {
+                    action = AudioService.ACTION_PLAY_PAUSE
+                }
+                remoteViews.setOnClickPendingIntent(R.id.widget_btn_play_pause, getServicePendingIntent(context, 11, playPauseIntent))
+
+                val nextIntent = Intent(context, AudioService::class.java).apply {
+                    action = AudioService.ACTION_SKIP_NEXT
+                }
+                remoteViews.setOnClickPendingIntent(R.id.widget_btn_next, getServicePendingIntent(context, 12, nextIntent))
+
+                val appIntent = Intent(context, MainActivity::class.java)
+                val appPendingIntent = PendingIntent.getActivity(
+                    context, 0, appIntent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                )
+                remoteViews.setOnClickPendingIntent(R.id.widget_root, appPendingIntent)
+
+                appWidgetManager.updateAppWidget(componentName, remoteViews)
             } catch (e: Exception) {
+                // Catch any RemoteViews exception to prevent widget from crashing
                 e.printStackTrace()
             }
-
-            val playPauseIcon = if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play
-            remoteViews.setImageViewResource(R.id.widget_btn_play_pause, playPauseIcon)
-
-            val artPath = song?.artworkPath
-            var artLoaded = false
-            val bitmap = loadScaledBitmap(context, artPath)
-            if (bitmap != null) {
-                remoteViews.setImageViewBitmap(R.id.widget_album_art, bitmap)
-                artLoaded = true
-            }
-            if (!artLoaded) {
-                remoteViews.setImageViewResource(R.id.widget_album_art, R.drawable.ic_music_note)
-            }
-
-            // Shuffle & Repeat active vector icons & intents for 4x2 widget
-            if (layoutResId == R.layout.widget_music_4x2) {
-                val shuffleRes = if (isShuffleEnabled) R.drawable.ic_widget_shuffle_on else R.drawable.ic_widget_shuffle_off
-                remoteViews.setImageViewResource(R.id.widget_btn_shuffle, shuffleRes)
-
-                val repeatRes = if (isRepeatEnabled) R.drawable.ic_widget_repeat_on else R.drawable.ic_widget_repeat_off
-                remoteViews.setImageViewResource(R.id.widget_btn_repeat, repeatRes)
-
-                val shuffleIntent = Intent(context, AudioService::class.java).apply {
-                    action = AudioService.ACTION_TOGGLE_SHUFFLE
-                }
-                val shufflePendingIntent = PendingIntent.getService(
-                    context, 13, shuffleIntent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-                )
-                remoteViews.setOnClickPendingIntent(R.id.widget_btn_shuffle, shufflePendingIntent)
-
-                val repeatIntent = Intent(context, AudioService::class.java).apply {
-                    action = AudioService.ACTION_TOGGLE_REPEAT
-                }
-                val repeatPendingIntent = PendingIntent.getService(
-                    context, 14, repeatIntent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-                )
-                remoteViews.setOnClickPendingIntent(R.id.widget_btn_repeat, repeatPendingIntent)
-            }
-
-            // Pending Intents for standard controls
-            val prevIntent = Intent(context, AudioService::class.java).apply {
-                action = AudioService.ACTION_SKIP_PREVIOUS
-            }
-            val prevPendingIntent = PendingIntent.getService(
-                context, 10, prevIntent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-            )
-            remoteViews.setOnClickPendingIntent(R.id.widget_btn_previous, prevPendingIntent)
-
-            val playPauseIntent = Intent(context, AudioService::class.java).apply {
-                action = AudioService.ACTION_PLAY_PAUSE
-            }
-            val playPausePendingIntent = PendingIntent.getService(
-                context, 11, playPauseIntent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-            )
-            remoteViews.setOnClickPendingIntent(R.id.widget_btn_play_pause, playPausePendingIntent)
-
-            val nextIntent = Intent(context, AudioService::class.java).apply {
-                action = AudioService.ACTION_SKIP_NEXT
-            }
-            val nextPendingIntent = PendingIntent.getService(
-                context, 12, nextIntent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-            )
-            remoteViews.setOnClickPendingIntent(R.id.widget_btn_next, nextPendingIntent)
-
-            val appIntent = Intent(context, MainActivity::class.java)
-            val appPendingIntent = PendingIntent.getActivity(
-                context, 0, appIntent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-            )
-            remoteViews.setOnClickPendingIntent(R.id.widget_root, appPendingIntent)
-
-            appWidgetManager.updateAppWidget(componentName, remoteViews)
         }
 
-        private fun loadScaledBitmap(context: Context, path: String?): android.graphics.Bitmap? {
+        private fun loadScaledBitmap(context: Context, path: String?): Bitmap? {
             if (path.isNullOrBlank()) return null
+            // Only attempt to load image files, not audio files
+            val lowerPath = path.lowercase()
+            if (lowerPath.endsWith(".mp3") || lowerPath.endsWith(".m4a") ||
+                lowerPath.endsWith(".flac") || lowerPath.endsWith(".wav") ||
+                lowerPath.endsWith(".ogg") || lowerPath.endsWith(".aac") ||
+                lowerPath.endsWith(".wma")) {
+                return null
+            }
             try {
-                if (path.startsWith("content://") || path.startsWith("file://")) {
+                if (path.startsWith("http://") || path.startsWith("https://")) {
+                    val oldPolicy = android.os.StrictMode.getThreadPolicy()
+                    android.os.StrictMode.setThreadPolicy(android.os.StrictMode.ThreadPolicy.Builder().permitAll().build())
+                    try {
+                        val url = java.net.URL(path)
+                        url.openStream().use { stream ->
+                            val options = BitmapFactory.Options().apply {
+                                inSampleSize = 2
+                            }
+                            return BitmapFactory.decodeStream(stream, null, options)
+                        }
+                    } finally {
+                        android.os.StrictMode.setThreadPolicy(oldPolicy)
+                    }
+                } else if (path.startsWith("content://") || path.startsWith("file://")) {
                     val uri = android.net.Uri.parse(path)
                     context.contentResolver.openInputStream(uri)?.use { stream ->
                         val options = BitmapFactory.Options().apply {

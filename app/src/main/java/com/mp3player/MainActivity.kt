@@ -106,8 +106,13 @@ import androidx.compose.foundation.layout.aspectRatio
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 
-
-
+import android.media.audiofx.AudioEffect
+import android.widget.Toast
+import com.mp3player.ui.viewmodel.MusicViewModel.StatsSortColumn
+import com.mp3player.data.dao.SongStats
+import com.mp3player.data.dao.KeeperLeaderboardEntry
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 class MainActivity : ComponentActivity() {
 
     private val viewModel: MusicViewModel by viewModels()
@@ -173,6 +178,9 @@ class MainActivity : ComponentActivity() {
             }
             boundService.onToggleRepeatListener = {
                 viewModel.toggleRepeatMode()
+            }
+            boundService.onRecentlyPlayedListener = {
+                viewModel.recentlyPlayedSongs.value
             }
         }
 
@@ -1158,7 +1166,9 @@ fun PlaylistCardCover(
     val songs by remember(playlistId) {
         viewModel.getSongsForPlaylistFlow(playlistId)
     }.collectAsState(initial = emptyList())
-    val stats by viewModel.playlistStats.collectAsState()
+    val stats by remember(playlistId) {
+        viewModel.getPlaylistSongStatsFlow(playlistId)
+    }.collectAsState(initial = emptyList())
     
     PlaylistCollageCover(songs = songs, stats = stats, modifier = modifier)
 }
@@ -1466,6 +1476,7 @@ fun PlaylistDetailView(
     
     var showAddSongsDialog by remember { mutableStateOf(false) }
     var showStatsDialog by remember { mutableStateOf(false) }
+    var showPlaylistStats by remember { mutableStateOf(false) }
     var showRenameDialog by remember { mutableStateOf(false) }
     var songToRemove by remember { mutableStateOf<SongEntity?>(null) }
     var showWeightEditDialog by remember { mutableStateOf<SongEntity?>(null) }
@@ -1744,17 +1755,22 @@ fun PlaylistDetailView(
                                     TextButton(onClick = { showAddSongsDialog = true }) {
                                         Icon(Icons.Default.Add, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
                                         Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Add Track", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
+                                        Text("Add", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
                                     }
                                     TextButton(onClick = { isEditMode = !isEditMode }) {
                                         Icon(Icons.Default.Edit, contentDescription = null, tint = if (isEditMode) MaterialTheme.colorScheme.primary else Color.LightGray, modifier = Modifier.size(16.dp))
                                         Spacer(modifier = Modifier.width(4.dp))
                                         Text("Edit", color = if (isEditMode) MaterialTheme.colorScheme.primary else Color.LightGray, fontSize = 12.sp)
                                     }
+                                    TextButton(onClick = { showPlaylistStats = true }) {
+                                        Icon(Icons.Default.BarChart, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Stats", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
+                                    }
                                     TextButton(onClick = { showStatsDialog = true }) {
                                         Icon(Icons.Default.Tune, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
                                         Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Shuffle Options", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
+                                        Text("Options", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
                                     }
                                 }
 
@@ -2188,6 +2204,31 @@ fun PlaylistDetailView(
                 onDismiss = { showStatsDialog = false }
             )
         }
+
+        if (showPlaylistStats) {
+            val stats by viewModel.playlistStats.collectAsState()
+            val keepers by viewModel.playlistKeepers.collectAsState()
+            val sortColumn by viewModel.statsSortColumn.collectAsState()
+            val sortAscending by viewModel.statsSortAscending.collectAsState()
+
+            StatsScreen(
+                stats = stats,
+                keepers = keepers,
+                sortColumn = sortColumn,
+                sortAscending = sortAscending,
+                onSortChange = { 
+                    if (viewModel.statsSortColumn.value == it) {
+                        viewModel.statsSortAscending.value = !viewModel.statsSortAscending.value
+                    } else {
+                        viewModel.statsSortColumn.value = it
+                        viewModel.statsSortAscending.value = false
+                    }
+                },
+                onToggleAscending = { viewModel.statsSortAscending.value = !viewModel.statsSortAscending.value },
+                title = "${playlist.name} Stats",
+                onDismiss = { showPlaylistStats = false }
+            )
+        }
     }
 
 @Composable
@@ -2378,7 +2419,7 @@ fun PlaylistStatsDialog(
                                                 Text(stat.artist, color = Color.Gray, fontSize = 12.sp, maxLines = 1)
                                             }
                                             Spacer(modifier = Modifier.width(8.dp))
-                                            Text("Skip: %.0f%%".format(Locale.US, stat.skipRate * 100), color = if (stat.skipRate > 0.5f) Color.Red else Color.Gray, fontSize = 14.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+                                            Text("Skip: %.0f%% (%d)".format(Locale.US, stat.skipRate * 100, stat.skipCount), color = if (stat.skipRate > 0.5f) Color.Red else Color.Gray, fontSize = 14.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
                                         }
                                         
                                         Spacer(modifier = Modifier.height(8.dp))
@@ -2499,22 +2540,184 @@ fun SettingsScreen(viewModel: MusicViewModel) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column {
-                Text("Auto Skip Penalty", color = Color.White)
-                Text("Lowers odds for highly skipped tracks", color = Color.Gray, fontSize = 12.sp)
-            }
-            Switch(checked = useSkipPenalty, onCheckedChange = { viewModel.updateSkipPenalty(it) })
-        }
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column {
                 Text("Auto Keeper Bonus", color = Color.White)
                 Text("Boosts landing target tracks", color = Color.Gray, fontSize = 12.sp)
             }
             Switch(checked = useKeeperBonus, onCheckedChange = { viewModel.updateKeeperBonus(it) })
+        }
+
+        HorizontalDivider()
+
+        val playerManager by viewModel.playerManager.collectAsState()
+        val context = LocalContext.current
+        
+        Button(
+            onClick = {
+                val audioSessionId = playerManager?.audioSessionId ?: 0
+                if (audioSessionId != 0) {
+                    try {
+                        val intent = Intent(AudioEffect.ACTION_DISPLAY_AUDIO_EFFECT_CONTROL_PANEL).apply {
+                            putExtra(AudioEffect.EXTRA_AUDIO_SESSION, audioSessionId)
+                            putExtra(AudioEffect.EXTRA_PACKAGE_NAME, context.packageName)
+                            putExtra(AudioEffect.EXTRA_CONTENT_TYPE, AudioEffect.CONTENT_TYPE_MUSIC)
+                        }
+                        context.startActivity(intent)
+                    } catch (e: Exception) {
+                        Toast.makeText(context, "No equalizer app found on this device", Toast.LENGTH_SHORT).show()
+                    }
+                } else {
+                    Toast.makeText(context, "Start playback first", Toast.LENGTH_SHORT).show()
+                }
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Equalizer")
+        }
+
+        var showGlobalStats by remember { mutableStateOf(false) }
+
+        Button(
+            onClick = { showGlobalStats = true },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Library Stats")
+        }
+
+        if (showGlobalStats) {
+            val stats by viewModel.songStats.collectAsState()
+            val keepers by viewModel.keepersLeaderboard.collectAsState()
+            val sortColumn by viewModel.statsSortColumn.collectAsState()
+            val sortAscending by viewModel.statsSortAscending.collectAsState()
+
+            StatsScreen(
+                stats = stats,
+                keepers = keepers,
+                sortColumn = sortColumn,
+                sortAscending = sortAscending,
+                onSortChange = { 
+                    if (viewModel.statsSortColumn.value == it) {
+                        viewModel.statsSortAscending.value = !viewModel.statsSortAscending.value
+                    } else {
+                        viewModel.statsSortColumn.value = it
+                        viewModel.statsSortAscending.value = false
+                    }
+                },
+                onToggleAscending = { viewModel.statsSortAscending.value = !viewModel.statsSortAscending.value },
+                title = "Global Stats",
+                onDismiss = { showGlobalStats = false }
+            )
+        }
+    }
+}
+
+@Composable
+fun StatsScreen(
+    stats: List<SongStats>,
+    keepers: List<KeeperLeaderboardEntry>,
+    sortColumn: StatsSortColumn,
+    sortAscending: Boolean,
+    onSortChange: (StatsSortColumn) -> Unit,
+    onToggleAscending: () -> Unit,
+    title: String,
+    onDismiss: () -> Unit
+) {
+    val sortedStats = remember(stats, sortColumn, sortAscending) {
+        val sorted = when (sortColumn) {
+            StatsSortColumn.TITLE -> stats.sortedBy { it.title }
+            StatsSortColumn.PLAY_COUNT -> stats.sortedBy { it.playCount }
+            StatsSortColumn.SKIP_COUNT -> stats.sortedBy { it.skipCount }
+            StatsSortColumn.SKIP_RATE -> stats.sortedBy { it.skipRate }
+            StatsSortColumn.KEEPER_COUNT -> stats.sortedBy { it.keeperCount }
+        }
+        if (sortAscending) sorted else sorted.reversed()
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.background
+        ) {
+            Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(title, style = MaterialTheme.typography.titleLarge, color = Color.White, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
+                    }
+                }
+                
+                Spacer(modifier = Modifier.height(16.dp))
+                
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    val arrow = if (sortAscending) "↑" else "↓"
+                    FilterChip(
+                        selected = sortColumn == StatsSortColumn.TITLE,
+                        onClick = { onSortChange(StatsSortColumn.TITLE) },
+                        label = { Text("Title ${if (sortColumn == StatsSortColumn.TITLE) arrow else ""}", fontSize = 12.sp) }
+                    )
+                    FilterChip(
+                        selected = sortColumn == StatsSortColumn.PLAY_COUNT,
+                        onClick = { onSortChange(StatsSortColumn.PLAY_COUNT) },
+                        label = { Text("Plays ${if (sortColumn == StatsSortColumn.PLAY_COUNT) arrow else ""}", fontSize = 12.sp) }
+                    )
+                    FilterChip(
+                        selected = sortColumn == StatsSortColumn.SKIP_COUNT,
+                        onClick = { onSortChange(StatsSortColumn.SKIP_COUNT) },
+                        label = { Text("Skips ${if (sortColumn == StatsSortColumn.SKIP_COUNT) arrow else ""}", fontSize = 12.sp) }
+                    )
+                    FilterChip(
+                        selected = sortColumn == StatsSortColumn.SKIP_RATE,
+                        onClick = { onSortChange(StatsSortColumn.SKIP_RATE) },
+                        label = { Text("Skip Rate ${if (sortColumn == StatsSortColumn.SKIP_RATE) arrow else ""}", fontSize = 12.sp) }
+                    )
+                    FilterChip(
+                        selected = sortColumn == StatsSortColumn.KEEPER_COUNT,
+                        onClick = { onSortChange(StatsSortColumn.KEEPER_COUNT) },
+                        label = { Text("Keepers ${if (sortColumn == StatsSortColumn.KEEPER_COUNT) arrow else ""}", fontSize = 12.sp) }
+                    )
+                }
+                
+                Spacer(modifier = Modifier.height(16.dp))
+                
+                if (sortedStats.isEmpty()) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("No stats available.", color = Color.Gray)
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(sortedStats, key = { it.songId }) { stat ->
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                            ) {
+                                Row(modifier = Modifier.padding(12.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(stat.title, color = Color.White, fontSize = 14.sp, maxLines = 1, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+                                        Text(stat.artist, color = Color.Gray, fontSize = 12.sp, maxLines = 1)
+                                    }
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column(horizontalAlignment = Alignment.End) {
+                                        Text("P: ${stat.playCount} | S: ${stat.skipCount}", color = Color.LightGray, fontSize = 12.sp)
+                                        Text("Skip: %.0f%% | K: ${stat.keeperCount}".format(Locale.US, stat.skipRate * 100), color = if (stat.skipRate > 0.5f) Color.Red else Color.LightGray, fontSize = 12.sp)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -2963,6 +3166,8 @@ fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
     val activeIndex = viewModel.activeQueueIndex
     val playerManager by viewModel.playerManager.collectAsState()
     val currentSong = playerManager?.currentPlayingSong?.collectAsState(null)?.value
+    val manualIds by viewModel.manualQueueSongInstanceIds.collectAsState()
+    val playlistName by viewModel.activePlaylistName.collectAsState()
     val listState = rememberLazyListState()
     
     var draggedIndex by remember { mutableStateOf<Int?>(null) }
@@ -3026,11 +3231,9 @@ fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
                     }
                 } else {
                     val currentDraggedIndex = draggedIndex
-                    // Mutable ref so onDragEnd/onDragCancel always read the latest value
                     var currentTargetIndex by remember { mutableStateOf<Int?>(null) }
                     val currentTargetIndexRef = rememberUpdatedState(currentTargetIndex)
 
-                    // Recalculate target index reactively whenever drag position or scroll changes
                     LaunchedEffect(currentDraggedIndex, targetScreenY, listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset) {
                         currentTargetIndex = if (currentDraggedIndex == null) null
                         else {
@@ -3065,12 +3268,49 @@ fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
                         LazyColumn(
                             state = listState,
                             modifier = Modifier.fillMaxSize(),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
                             userScrollEnabled = draggedIndex == null
                         ) {
-                            itemsIndexed(displayQueue, key = { index, song -> "${index}_${song.id}_${song.instanceId}" }) { index, song ->
-                                val isActive = index == activeIndex
+                            itemsIndexed(displayQueue, key = { _, song -> song.instanceId }) { index, song ->
+                                val isActive = (currentSong != null && song.id == currentSong.id) || (index == activeIndex)
+                                val isManual = song.instanceId in manualIds
                                 val isDraggedItem = index == currentDraggedIndex
+                                
+                                // Section header determination
+                                val sectionHeader = when {
+                                    index == activeIndex -> "Now Playing"
+                                    isManual && (index == activeIndex + 1 || (index > 0 && displayQueue.getOrNull(index - 1)?.let { prev -> prev.instanceId !in manualIds || displayQueue.indexOf(prev) == activeIndex } == true && manualIds.isNotEmpty())) -> {
+                                        val prevIsManual = index > 0 && displayQueue.getOrNull(index - 1)?.instanceId in manualIds
+                                        val prevIsNowPlaying = index - 1 == activeIndex
+                                        if (!prevIsManual || prevIsNowPlaying) "Added to Queue" else null
+                                    }
+                                    !isManual && index > activeIndex -> {
+                                        val prevIsPlaylist = index > 0 && displayQueue.getOrNull(index - 1)?.let { prev -> prev.instanceId !in manualIds && displayQueue.indexOf(prev) > activeIndex && displayQueue.indexOf(prev) != activeIndex } == true
+                                        if (!prevIsPlaylist) {
+                                            if (!playlistName.isNullOrBlank()) "Next from $playlistName" else "Next from Playlist"
+                                        } else null
+                                    }
+                                    else -> null
+                                }
+                                
+                                if (sectionHeader != null && sectionHeader != "Now Playing") {
+                                    Text(
+                                        text = sectionHeader,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontSize = 13.sp,
+                                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                                        modifier = Modifier.padding(top = 12.dp, bottom = 4.dp)
+                                    )
+                                }
+                                if (index == activeIndex) {
+                                    Text(
+                                        text = "Now Playing",
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontSize = 13.sp,
+                                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                                        modifier = Modifier.padding(bottom = 4.dp)
+                                    )
+                                }
 
                                 val targetTranslationY = run {
                                     val dragIdx = currentDraggedIndex
@@ -3089,7 +3329,7 @@ fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
 
                                 val animatedY by animateFloatAsState(
                                     targetValue = targetTranslationY,
-                                    animationSpec = if (currentDraggedIndex != null) spring(stiffness = Spring.StiffnessMediumLow) else snap(),
+                                    animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
                                     label = "reorderTranslation"
                                 )
 
@@ -3104,12 +3344,17 @@ fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
                                         defaultElevation = if (isActive) 2.dp else 0.dp
                                     ),
                                     colors = CardDefaults.cardColors(
-                                        containerColor = if (isActive) 
-                                            MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) 
-                                        else 
-                                            MaterialTheme.colorScheme.surface
+                                        containerColor = when {
+                                            isActive -> MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                            isManual -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.08f)
+                                            else -> MaterialTheme.colorScheme.surface
+                                        }
                                     ),
-                                    border = if (isActive) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null
+                                    border = when {
+                                        isActive -> BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary)
+                                        isManual -> BorderStroke(1.dp, MaterialTheme.colorScheme.tertiary.copy(alpha = 0.3f))
+                                        else -> null
+                                    }
                                 ) {
                                     Row(
                                         modifier = Modifier
@@ -3159,6 +3404,7 @@ fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
                                                     )
                                                 }
                                         )
+
                                         Spacer(modifier = Modifier.width(4.dp))
 
                                         if (song.artworkPath != null) {
@@ -3202,6 +3448,9 @@ fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
 
                                         if (isActive) {
                                             Text("Playing", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                        } else if (isManual) {
+                                            Text("Queued", color = MaterialTheme.colorScheme.tertiary, fontSize = 11.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium)
                                             Spacer(modifier = Modifier.width(4.dp))
                                         }
 
@@ -3321,4 +3570,5 @@ fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
         }
     }
 }
+
 }

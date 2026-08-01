@@ -21,9 +21,9 @@ class CrossfadePlayerManager(
     private val onCrossfadeCompleted: ((SongEntity) -> Unit)? = null,
     private val onPrepareNextSong: (() -> SongEntity?)? = null
 ) {
-    // Two players for crossfading
-    private var playerA: ExoPlayer = ExoPlayer.Builder(context).build()
-    private var playerB: ExoPlayer = ExoPlayer.Builder(context).build()
+    // Two players for crossfading with WAKE_MODE_LOCAL so CPU stays awake when screen is closed
+    private var playerA: ExoPlayer = ExoPlayer.Builder(context).setWakeMode(C.WAKE_MODE_LOCAL).build()
+    private var playerB: ExoPlayer = ExoPlayer.Builder(context).setWakeMode(C.WAKE_MODE_LOCAL).build()
     
     private var currentPlayer: ExoPlayer = playerA
     private var nextPlayer: ExoPlayer = playerB
@@ -40,6 +40,8 @@ class CrossfadePlayerManager(
 
     private val _isCrossfadingFlow = MutableStateFlow(false)
     val isCrossfadingFlow: StateFlow<Boolean> = _isCrossfadingFlow
+
+    val audioSessionId: Int get() = currentPlayer.audioSessionId
 
     private var handler = Handler(Looper.getMainLooper())
     

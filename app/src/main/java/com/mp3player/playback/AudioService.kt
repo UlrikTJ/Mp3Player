@@ -4,16 +4,22 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.drawable.BitmapDrawable
+import android.media.AudioManager
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
 import android.support.v4.media.MediaMetadataCompat
 import android.support.v4.media.session.MediaSessionCompat
+import android.support.v4.media.session.PlaybackStateCompat
 import androidx.core.app.NotificationCompat
 import coil.ImageLoader
 import coil.request.ImageRequest
@@ -36,6 +42,8 @@ class AudioService : Service() {
     private val NOTIFICATION_ID = 1001
     private val CHANNEL_ID = "mp3player_playback_channel"
 
+    private var currentArtworkBitmap: Bitmap? = null
+
     var onTrackEndedListener: (() -> Unit)? = null
     var onTrackStartedListener: ((SongEntity) -> Unit)? = null
     var onCrossfadeCompletedListener: ((SongEntity) -> Unit)? = null
@@ -43,10 +51,45 @@ class AudioService : Service() {
     var onSkipPreviousListener: (() -> Unit)? = null
     var onToggleShuffleListener: (() -> Unit)? = null
     var onToggleRepeatListener: (() -> Unit)? = null
+    var onRecentlyPlayedListener: (() -> List<SongEntity>)? = null
+
+    private fun updateWidgetFromService(song: SongEntity?, isPlaying: Boolean, progressMs: Long = 0L) {
+        val sharedPrefs = getSharedPreferences("Mp3PlayerPrefs", MODE_PRIVATE)
+        val shuffle = sharedPrefs.getBoolean("weighted_shuffle", true)
+        val repeat = sharedPrefs.getBoolean("is_looping", false)
+        val recentSongs = onRecentlyPlayedListener?.invoke() ?: emptyList()
+        MusicAppWidgetProvider.updateWidget(
+            context = this,
+            song = song,
+            isPlaying = isPlaying,
+            isShuffleEnabled = shuffle,
+            isRepeatEnabled = repeat,
+            artworkBitmap = currentArtworkBitmap,
+            progressMs = progressMs,
+            recentSongs = recentSongs
+        )
+    }
 
     inner class AudioBinder : Binder() {
         fun getService(): AudioService = this@AudioService
     }
+
+    // Audio becoming noisy receiver (headset disconnect)
+    private val noisyReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) {
+                // Pause playback when headphones are unplugged or Bluetooth disconnects
+                if (playerManager.isPlaying.value) {
+                    playerManager.pause()
+                    playerManager.currentPlayingSong.value?.let { song ->
+                        updateNotification(song, false)
+                        updateWidgetFromService(song, false, playerManager.playbackProgress.value)
+                    }
+                }
+            }
+        }
+    }
+    private var noisyReceiverRegistered = false
 
     override fun onCreate() {
         super.onCreate()
@@ -54,6 +97,45 @@ class AudioService : Service() {
 
         mediaSession = MediaSessionCompat(this, "Mp3PlayerAudioService").apply {
             isActive = true
+
+            // MediaSession Callback for earbud/headset/Bluetooth controls and lock screen
+            setCallback(object : MediaSessionCompat.Callback() {
+                override fun onPlay() {
+                    playerManager.resume()
+                    playerManager.currentPlayingSong.value?.let { song ->
+                        updateNotification(song, true)
+                        updateWidgetFromService(song, true, playerManager.playbackProgress.value)
+                    }
+                }
+
+                override fun onPause() {
+                    playerManager.pause()
+                    playerManager.currentPlayingSong.value?.let { song ->
+                        updateNotification(song, false)
+                        updateWidgetFromService(song, false, playerManager.playbackProgress.value)
+                    }
+                }
+
+                override fun onSkipToNext() {
+                    onTrackEndedListener?.invoke()
+                }
+
+                override fun onSkipToPrevious() {
+                    onSkipPreviousListener?.invoke()
+                }
+
+                override fun onStop() {
+                    playerManager.pause()
+                    playerManager.currentPlayingSong.value?.let { song ->
+                        updateNotification(song, false)
+                        updateWidgetFromService(song, false, playerManager.playbackProgress.value)
+                    }
+                }
+
+                override fun onSeekTo(pos: Long) {
+                    playerManager.seekTo(pos)
+                }
+            })
         }
 
         playerManager = CrossfadePlayerManager(
@@ -62,7 +144,7 @@ class AudioService : Service() {
             onTrackStarted = { song ->
                 onTrackStartedListener?.invoke(song)
                 updateNotification(song, playerManager.isPlaying.value)
-                MusicAppWidgetProvider.updateWidget(this, song, playerManager.isPlaying.value)
+                updateWidgetFromService(song, playerManager.isPlaying.value, playerManager.playbackProgress.value)
             },
             onCrossfadeCompleted = { song ->
                 onCrossfadeCompletedListener?.invoke(song)
@@ -72,11 +154,32 @@ class AudioService : Service() {
             }
         )
 
+        // Register audio becoming noisy receiver
+        try {
+            val filter = IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(noisyReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                registerReceiver(noisyReceiver, filter)
+            }
+            noisyReceiverRegistered = true
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
         CoroutineScope(Dispatchers.Main).launch {
             playerManager.isPlaying.collect { isPlaying ->
                 playerManager.currentPlayingSong.value?.let { song ->
                     updateNotification(song, isPlaying)
-                    MusicAppWidgetProvider.updateWidget(this@AudioService, song, isPlaying)
+                    updateWidgetFromService(song, isPlaying, playerManager.playbackProgress.value)
+                }
+            }
+        }
+
+        CoroutineScope(Dispatchers.Main).launch {
+            playerManager.playbackProgress.collect { progressMs ->
+                playerManager.currentPlayingSong.value?.let { song ->
+                    updateWidgetFromService(song, playerManager.isPlaying.value, progressMs)
                 }
             }
         }
@@ -240,9 +343,12 @@ class AudioService : Service() {
                         val topOffset = (original.height - targetHeight) / 2
                         largeIconBitmap = Bitmap.createBitmap(original, 0, topOffset, original.width, targetHeight)
                     }
+                    currentArtworkBitmap = largeIconBitmap
                 } catch (e: Exception) {
                     e.printStackTrace()
                 }
+            } else {
+                currentArtworkBitmap = null
             }
 
             // Update MediaSession Metadata so System UI Media Controls use full-res HD artwork
@@ -257,6 +363,25 @@ class AudioService : Service() {
                 metadataBuilder.putBitmap(MediaMetadataCompat.METADATA_KEY_ART, largeIconBitmap)
             }
             mediaSession.setMetadata(metadataBuilder.build())
+
+            // Update PlaybackState for lock screen controls and earbud button routing
+            val stateBuilder = PlaybackStateCompat.Builder()
+                .setActions(
+                    PlaybackStateCompat.ACTION_PLAY or
+                    PlaybackStateCompat.ACTION_PAUSE or
+                    PlaybackStateCompat.ACTION_PLAY_PAUSE or
+                    PlaybackStateCompat.ACTION_SKIP_TO_NEXT or
+                    PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or
+                    PlaybackStateCompat.ACTION_SEEK_TO or
+                    PlaybackStateCompat.ACTION_STOP
+                )
+                .setState(
+                    if (isPlaying) PlaybackStateCompat.STATE_PLAYING else PlaybackStateCompat.STATE_PAUSED,
+                    playerManager.playbackProgress.value,
+                    if (isPlaying) 1.0f else 0.0f,
+                    SystemClock.elapsedRealtime()
+                )
+            mediaSession.setPlaybackState(stateBuilder.build())
 
             val builder = NotificationCompat.Builder(this@AudioService, CHANNEL_ID)
                 .setContentTitle(song.title)
@@ -282,6 +407,7 @@ class AudioService : Service() {
             val notification = builder.build()
 
             withContext(Dispatchers.Main) {
+                updateWidgetFromService(song, isPlaying, playerManager.playbackProgress.value)
                 try {
                     if (isPlaying) {
                         val serviceIntent = Intent(this@AudioService, AudioService::class.java)
@@ -314,6 +440,16 @@ class AudioService : Service() {
     }
 
     override fun onDestroy() {
+        // Unregister noisy receiver
+        if (noisyReceiverRegistered) {
+            try {
+                unregisterReceiver(noisyReceiver)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            noisyReceiverRegistered = false
+        }
+        mediaSession.isActive = false
         mediaSession.release()
         playerManager.release()
         super.onDestroy()

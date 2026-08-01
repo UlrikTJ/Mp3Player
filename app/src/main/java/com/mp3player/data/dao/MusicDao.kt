@@ -36,6 +36,9 @@ abstract class MusicDao {
     @Query("SELECT * FROM playlists ORDER BY name ASC")
     abstract fun getAllPlaylistsFlow(): Flow<List<PlaylistEntity>>
 
+    @Query("SELECT * FROM playlists WHERE id = :playlistId LIMIT 1")
+    abstract suspend fun getPlaylistById(playlistId: Int): PlaylistEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     abstract suspend fun insertPlaylist(playlist: PlaylistEntity): Long
 

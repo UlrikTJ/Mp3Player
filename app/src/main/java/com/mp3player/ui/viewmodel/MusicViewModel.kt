@@ -149,6 +149,26 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val activeQueue: List<SongEntity> get() = _currentQueue.value
     val activeQueueIndex: Int get() = currentQueueIndex
 
+    // Queue segmentation: track manually enqueued songs by their instanceId
+    private val _manualQueueSongInstanceIds = MutableStateFlow<Set<Long>>(emptySet())
+    val manualQueueSongInstanceIds: StateFlow<Set<Long>> = _manualQueueSongInstanceIds
+
+    // Active playlist tracking for queue section labels
+    private val _activePlaylistName = MutableStateFlow<String?>(null)
+    val activePlaylistName: StateFlow<String?> = _activePlaylistName
+
+    private val _activePlaylistId = MutableStateFlow<Int?>(null)
+    val activePlaylistId: StateFlow<Int?> = _activePlaylistId
+
+    // Recently played unique songs for widget
+    private val _recentlyPlayedSongs = MutableStateFlow<List<SongEntity>>(emptyList())
+    val recentlyPlayedSongs: StateFlow<List<SongEntity>> = _recentlyPlayedSongs
+
+    // Stats sorting
+    enum class StatsSortColumn { TITLE, PLAY_COUNT, SKIP_COUNT, SKIP_RATE, KEEPER_COUNT }
+    val statsSortColumn = MutableStateFlow(StatsSortColumn.PLAY_COUNT)
+    val statsSortAscending = MutableStateFlow(false)
+
     private val failedArtworkSongIds = mutableSetOf<Int>()
 
     init {
@@ -375,6 +395,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
             _playedSongIds.value = emptySet()
             userEnqueuedCount = 0
+            _manualQueueSongInstanceIds.value = emptySet()
 
             if (_useWeightedShuffle.value) {
                 val pool = candidateSongs.filter { it.id != song.id }
@@ -390,21 +411,44 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 _currentQueue.value = fullQueue
                 currentQueueIndex = 0
             } else {
-                val queueList = candidateSongs.toMutableList()
-                if (isCross && songB != null && songB.id != song.id) {
-                    queueList.removeAll { it.id == song.id || it.id == songB.id }
-                    queueList.add(0, song)
-                    queueList.add(1, songB)
+                // Sequential playback: start from the tapped song's position in the list
+                val songIndex = candidateSongs.indexOfFirst { it.id == song.id }
+                if (songIndex >= 0) {
+                    // Reorder: songs from songIndex onward, then wrap around
+                    val reordered = candidateSongs.subList(songIndex, candidateSongs.size) +
+                        candidateSongs.subList(0, songIndex)
+                    _currentQueue.value = reordered
+                    currentQueueIndex = 0
                 } else {
-                    val idx = queueList.indexOfFirst { it.id == song.id }
-                    if (idx > 0) {
-                        val s = queueList.removeAt(idx)
-                        queueList.add(0, s)
+                    val queueList = candidateSongs.toMutableList()
+                    if (isCross && songB != null && songB.id != song.id) {
+                        queueList.removeAll { it.id == song.id || it.id == songB.id }
+                        queueList.add(0, song)
+                        queueList.add(1, songB)
+                    } else {
+                        val idx = queueList.indexOfFirst { it.id == song.id }
+                        if (idx > 0) {
+                            val s = queueList.removeAt(idx)
+                            queueList.add(0, s)
+                        }
                     }
+                    _currentQueue.value = queueList
+                    currentQueueIndex = 0
                 }
-                _currentQueue.value = queueList
-                currentQueueIndex = 0
             }
+
+            // Track active playlist
+            if (playlistId != null) {
+                _activePlaylistId.value = playlistId
+                val playlist = withContext(Dispatchers.IO) {
+                    musicDao.getPlaylistById(playlistId)
+                }
+                _activePlaylistName.value = playlist?.name
+            } else {
+                _activePlaylistId.value = null
+                _activePlaylistName.value = null
+            }
+
             playCurrentQueueIndex(playlistId)
         }
     }
@@ -417,6 +461,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             _currentQueue.value = listOf(song)
             currentQueueIndex = 0
             userEnqueuedCount = 0
+            _manualQueueSongInstanceIds.update { it + song.instanceId }
             playCurrentQueueIndex(null)
             return
         }
@@ -425,6 +470,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         val insertIndex = (baseIndex + userEnqueuedCount + 1).coerceIn(0, queue.size)
         queue.add(insertIndex, song)
         userEnqueuedCount++
+        _manualQueueSongInstanceIds.update { it + song.instanceId }
         _currentQueue.value = queue
 
         if (insertIndex == baseIndex + 1) {
@@ -441,10 +487,25 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         
         if (song.id > 0) {
             _playbackHistory.update { it + song.id }
+            // Update recently played unique songs (last 4)
+            updateRecentlyPlayed(song)
+        }
+
+        // Remove from manual queue tracking once it starts playing
+        _manualQueueSongInstanceIds.update { it - song.instanceId }
+        if (userEnqueuedCount > 0) {
+            userEnqueuedCount--
         }
 
         val nextSong = getNextSongForQueuePublic()
         _playerManager.value?.play(song, nextSong)
+    }
+
+    private fun updateRecentlyPlayed(song: SongEntity) {
+        val current = _recentlyPlayedSongs.value.toMutableList()
+        current.removeAll { it.id == song.id }
+        current.add(0, song)
+        _recentlyPlayedSongs.value = current.take(4)
     }
 
     fun onTrackEndedEvent() {
@@ -458,6 +519,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         if (idx != -1) {
             currentQueueIndex = idx
         }
+        // Remove from manual queue tracking when played
+        _manualQueueSongInstanceIds.update { it - incomingSong.instanceId }
         if (userEnqueuedCount > 0) {
             userEnqueuedCount--
         }
@@ -466,6 +529,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         if (incomingSong.id > 0) {
             _playbackHistory.update { it + incomingSong.id }
             _playedSongIds.update { it + incomingSong.id }
+            updateRecentlyPlayed(incomingSong)
         }
         val nextUpcoming = getNextSongForQueuePublic()
         _playerManager.value?.setNextSong(nextUpcoming)
@@ -599,7 +663,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun selectNextTrack(completed: Boolean) {
         val queue = _currentQueue.value
-        if (queue.isEmpty()) return
+        if (queue.isEmpty()) {
+            android.widget.Toast.makeText(getApplication(), "No songs in queue", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
 
         val currentSong = queue.getOrNull(currentQueueIndex)
         if (currentSong != null && completed) {
@@ -621,6 +688,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 if (nextSong != null) {
                     currentQueueIndex = queue.indexOfFirst { it.id == nextSong.id }
                     playCurrentQueueIndex(selectedPlaylistId.value)
+                } else {
+                    android.widget.Toast.makeText(getApplication(), "No songs in queue", android.widget.Toast.LENGTH_SHORT).show()
                 }
             } else {
                 val pool = queue.filter { it.id !in _playedSongIds.value }
@@ -636,10 +705,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     if (nextSong != null) {
                         currentQueueIndex = queue.indexOfFirst { it.id == nextSong.id }
                         playCurrentQueueIndex(selectedPlaylistId.value)
+                    } else {
+                        android.widget.Toast.makeText(getApplication(), "No songs in queue", android.widget.Toast.LENGTH_SHORT).show()
                     }
                 } else {
                     _playerManager.value?.pause()
                     _playedSongIds.value = emptySet()
+                    android.widget.Toast.makeText(getApplication(), "No songs in queue", android.widget.Toast.LENGTH_SHORT).show()
                 }
             }
         } else {
@@ -653,6 +725,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     playCurrentQueueIndex(selectedPlaylistId.value)
                 } else {
                     _playerManager.value?.pause()
+                    android.widget.Toast.makeText(getApplication(), "No songs in queue", android.widget.Toast.LENGTH_SHORT).show()
                 }
             }
         }
@@ -785,7 +858,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun playPlaylist(playlistId: Int, shuffle: Boolean = false) {
+    fun playPlaylist(playlistId: Int, shuffle: Boolean = false, startSongId: Int? = null) {
         viewModelScope.launch {
             val songs = withContext(Dispatchers.IO) {
                 musicDao.getSongsForPlaylist(playlistId)
@@ -793,6 +866,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             if (songs.isNotEmpty()) {
                 _playedSongIds.value = emptySet()
                 userEnqueuedCount = 0
+                _manualQueueSongInstanceIds.value = emptySet()
                 
                 if (shuffle) {
                     _useWeightedShuffle.value = true
@@ -803,9 +877,27 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 } else {
                     _useWeightedShuffle.value = false
                     sharedPrefs.edit().putBoolean("weighted_shuffle", false).apply()
-                    _currentQueue.value = songs
+                    
+                    // Start from the tapped song position if provided
+                    val startIndex = if (startSongId != null) {
+                        songs.indexOfFirst { it.id == startSongId }.coerceAtLeast(0)
+                    } else {
+                        0
+                    }
+                    
+                    // Build queue starting from startIndex, wrapping around
+                    val reordered = songs.subList(startIndex, songs.size) +
+                        songs.subList(0, startIndex)
+                    _currentQueue.value = reordered
                     currentQueueIndex = 0
                 }
+                
+                // Track active playlist
+                _activePlaylistId.value = playlistId
+                val playlist = withContext(Dispatchers.IO) {
+                    musicDao.getPlaylistById(playlistId)
+                }
+                _activePlaylistName.value = playlist?.name
                 
                 playCurrentQueueIndex(playlistId)
             }

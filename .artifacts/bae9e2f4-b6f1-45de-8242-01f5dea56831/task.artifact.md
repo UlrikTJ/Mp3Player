@@ -1,5 +1,5 @@
-- [ ] Add atomic reorder methods to `MusicDao.kt`
-- [ ] Refactor `reorderSongInPlaylist` in `MusicViewModel.kt`
-- [ ] Stabilize drag gestures in `PlaylistDetailDialog` (`MainActivity.kt`)
-- [ ] Stabilize drag gestures in `QueueDialog` (`MainActivity.kt`)
-- [ ] Verify fix by building and testing drag-and-drop
+- [x] Add `Player.Listener` with error handling to `CrossfadePlayerManager.kt`
+- [x] Clamp duration and position to sane values in `CrossfadePlayerManager.kt`
+- [x] Fix progress reporting during crossfade transitions
+- [x] Add transition-state handling to `MainActivity.kt`
+- [x] Verify build and fix
