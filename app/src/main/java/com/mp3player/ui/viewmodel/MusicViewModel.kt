@@ -204,6 +204,19 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun playFirstPlaylistOrDefault() {
+        viewModelScope.launch {
+            val playlists = allPlaylists.value
+            val firstPlaylist = playlists.firstOrNull()
+            if (firstPlaylist != null) {
+                playPlaylist(firstPlaylist.id, shuffle = false)
+            } else if (allSongs.value.isNotEmpty()) {
+                playSongFromLibrary(allSongs.value.first(), null)
+            }
+        }
+    }
+
+
     // Stats sorting
     enum class StatsSortColumn { TITLE, PLAY_COUNT, SKIP_COUNT, SKIP_RATE, KEEPER_COUNT }
     val statsSortColumn = MutableStateFlow(StatsSortColumn.PLAY_COUNT)

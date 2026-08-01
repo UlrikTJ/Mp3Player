@@ -192,7 +192,11 @@ class MainActivity : ComponentActivity() {
             boundService.onPlaySpecificSongListener = { songId ->
                 viewModel.playSongById(songId)
             }
+            boundService.onPlayFirstPlaylistListener = {
+                viewModel.playFirstPlaylistOrDefault()
+            }
         }
+
 
         override fun onServiceDisconnected(name: ComponentName?) {
             audioService = null

@@ -55,8 +55,10 @@ class AudioService : Service() {
     var onActivePlaylistSongsListener: (() -> List<SongEntity>)? = null
     var onUpcomingOrTopSongsListener: (() -> List<SongEntity>)? = null
     var onPlaySpecificSongListener: ((Int) -> Unit)? = null
+    var onPlayFirstPlaylistListener: (() -> Unit)? = null
 
     private fun updateWidgetFromService(song: SongEntity?, isPlaying: Boolean, progressMs: Long = 0L) {
+
         val sharedPrefs = getSharedPreferences("Mp3PlayerPrefs", MODE_PRIVATE)
         val shuffle = sharedPrefs.getBoolean("weighted_shuffle", true)
         val repeat = sharedPrefs.getBoolean("is_looping", false)
@@ -193,17 +195,22 @@ class AudioService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_PLAY_PAUSE -> {
-                val nextState = !playerManager.isPlaying.value
-                if (playerManager.isPlaying.value) {
-                    playerManager.pause()
+                if (playerManager.currentPlayingSong.value != null) {
+                    val nextState = !playerManager.isPlaying.value
+                    if (playerManager.isPlaying.value) {
+                        playerManager.pause()
+                    } else {
+                        playerManager.resume()
+                    }
+                    playerManager.currentPlayingSong.value?.let { song ->
+                        updateNotification(song, nextState)
+                        updateWidgetFromService(song, nextState, playerManager.playbackProgress.value)
+                    }
                 } else {
-                    playerManager.resume()
-                }
-                playerManager.currentPlayingSong.value?.let { song ->
-                    updateNotification(song, nextState)
-                    updateWidgetFromService(song, nextState, playerManager.playbackProgress.value)
+                    onPlayFirstPlaylistListener?.invoke()
                 }
             }
+
             ACTION_SKIP_NEXT -> {
                 onTrackEndedListener?.invoke()
             }

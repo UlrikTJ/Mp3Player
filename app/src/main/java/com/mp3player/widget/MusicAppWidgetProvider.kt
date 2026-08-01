@@ -76,15 +76,15 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
             try {
                 val remoteViews = RemoteViews(context.packageName, layoutResId)
 
-                val title = song?.title ?: "Music"
-                val artist = song?.artist ?: "Tap to play your music"
+                val title = song?.title ?: (playlistSongs.firstOrNull()?.title ?: "My Playlist")
+                val artist = song?.artist ?: "${playlistSongs.size} tracks • Tap ▶ to play"
                 remoteViews.setTextViewText(R.id.widget_title, title)
                 remoteViews.setTextViewText(R.id.widget_artist, artist)
 
                 val playPauseIcon = if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play
                 remoteViews.setImageViewResource(R.id.widget_btn_play_pause, playPauseIcon)
 
-                // High-Quality Thumbnail Artwork Loading (Cropped to exact 1:1 square to eliminate sidebars)
+                // High-Quality Thumbnail Artwork Loading (Cropped to exact 1:1 square with rounded corners)
                 val artPath = song?.artworkPath
                 var artLoaded = false
                 if (artPath != null && artPath.isNotBlank()) {
@@ -102,8 +102,11 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
                     }
                 }
                 if (!artLoaded) {
-                    remoteViews.setImageViewResource(R.id.widget_album_art, R.drawable.ic_music_note)
+                    // Fallback when no song artwork or idle: Use the playlist's 3x3 collage bitmap
+                    val collageBmp = createPlaylistCollageBitmap(context, playlistSongs, recentSongs)
+                    remoteViews.setImageViewBitmap(R.id.widget_album_art, collageBmp)
                 }
+
 
                 // Shuffle & Repeat active vector icons & intents for 4x2 widget
                 if (layoutResId == R.layout.widget_music_4x2) {
@@ -226,9 +229,18 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
         private fun createPlaylistCollageBitmap(context: Context, playlistSongs: List<SongEntity>, fallbackSongs: List<SongEntity> = emptyList()): Bitmap {
             val sourceSongs = if (playlistSongs.any { !it.artworkPath.isNullOrBlank() }) playlistSongs else fallbackSongs
             val artworkPaths = sourceSongs.mapNotNull { it.artworkPath }.filter { it.isNotBlank() }.distinct().take(9)
-            val bitmaps = artworkPaths.mapNotNull { path ->
+            if (artworkPaths.isEmpty()) {
+                val defaultBitmap = Bitmap.createBitmap(180, 180, Bitmap.Config.ARGB_8888)
+                defaultBitmap.eraseColor(android.graphics.Color.DKGRAY)
+                return getRoundedCornerBitmap(defaultBitmap, 24f)
+            }
+
+
+            val top9Paths = List(9) { index -> artworkPaths[index % artworkPaths.size] }
+            val bitmaps = top9Paths.mapNotNull { path ->
                 loadScaledBitmap(context, path)?.let { cropToSquare(it) }
             }
+
 
 
             val size = 180
