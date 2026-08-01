@@ -102,7 +102,23 @@ class AudioService : Service() {
         super.onCreate()
         createNotificationChannel()
 
+        // Immediate foreground start satisfies Android's 5-second requirement 100% of the time
+        val initialNotification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("Mp3Player")
+            .setContentText("Ready")
+            .setSmallIcon(R.drawable.ic_music_note)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setOngoing(false)
+            .build()
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(NOTIFICATION_ID, initialNotification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+        } else {
+            startForeground(NOTIFICATION_ID, initialNotification)
+        }
+
         mediaSession = MediaSessionCompat(this, "Mp3PlayerAudioService").apply {
+
             isActive = true
 
             // MediaSession Callback for earbud/headset/Bluetooth controls and lock screen

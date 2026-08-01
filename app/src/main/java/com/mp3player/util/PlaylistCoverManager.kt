@@ -100,12 +100,16 @@ object PlaylistCoverManager {
 
     fun loadScaledBitmap(context: Context, path: String?): Bitmap? {
         if (path.isNullOrBlank()) return null
+        if (path.startsWith("http://") || path.startsWith("https://")) {
+            return null
+        }
         return try {
             val uri = if (path.startsWith("content://") || path.startsWith("file://")) {
                 Uri.parse(path)
             } else {
                 Uri.fromFile(File(path))
             }
+
 
             // Try 1: ContentResolver openInputStream
             val streamBitmap = try {

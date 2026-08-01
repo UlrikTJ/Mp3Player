@@ -311,30 +311,17 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
 
         private fun loadScaledBitmap(context: Context, path: String?): Bitmap? {
             if (path.isNullOrBlank()) return null
-            // Only attempt to load image files, not audio files
+            // Skip audio files and remote HTTP URLs (network loading must not block main thread)
             val lowerPath = path.lowercase()
             if (lowerPath.endsWith(".mp3") || lowerPath.endsWith(".m4a") ||
                 lowerPath.endsWith(".flac") || lowerPath.endsWith(".wav") ||
                 lowerPath.endsWith(".ogg") || lowerPath.endsWith(".aac") ||
-                lowerPath.endsWith(".wma")) {
+                lowerPath.endsWith(".wma") ||
+                lowerPath.startsWith("http://") || lowerPath.startsWith("https://")) {
                 return null
             }
             try {
-                if (path.startsWith("http://") || path.startsWith("https://")) {
-                    val oldPolicy = android.os.StrictMode.getThreadPolicy()
-                    android.os.StrictMode.setThreadPolicy(android.os.StrictMode.ThreadPolicy.Builder().permitAll().build())
-                    try {
-                        val url = java.net.URL(path)
-                        url.openStream().use { stream ->
-                            val options = BitmapFactory.Options().apply {
-                                inSampleSize = 2
-                            }
-                            return BitmapFactory.decodeStream(stream, null, options)
-                        }
-                    } finally {
-                        android.os.StrictMode.setThreadPolicy(oldPolicy)
-                    }
-                } else if (path.startsWith("content://") || path.startsWith("file://")) {
+                if (path.startsWith("content://") || path.startsWith("file://")) {
                     val uri = android.net.Uri.parse(path)
                     context.contentResolver.openInputStream(uri)?.use { stream ->
                         val options = BitmapFactory.Options().apply {
