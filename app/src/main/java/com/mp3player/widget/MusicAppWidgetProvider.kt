@@ -263,7 +263,7 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
             val canvas = android.graphics.Canvas(output)
             val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
             val rect = android.graphics.Rect(0, 0, bitmap.width, bitmap.height)
-            val rectF = android.graphics.RectF(rect)
+                    val rectF = android.graphics.RectF(rect)
             canvas.drawRoundRect(rectF, cornerRadiusPx, cornerRadiusPx, paint)
             paint.xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC_IN)
             canvas.drawBitmap(bitmap, rect, rect, paint)
@@ -271,58 +271,22 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
         }
 
         private fun createPlaylistCollageBitmap(context: Context, playlistSongs: List<SongEntity>, fallbackSongs: List<SongEntity> = emptyList()): Bitmap {
-            val sourceSongs = if (playlistSongs.any { !it.artworkPath.isNullOrBlank() }) playlistSongs else fallbackSongs
-            val artworkPaths = sourceSongs.mapNotNull { it.artworkPath }.filter { it.isNotBlank() }.distinct().take(9)
-            if (artworkPaths.isEmpty()) {
-                val defaultBitmap = Bitmap.createBitmap(180, 180, Bitmap.Config.ARGB_8888)
-                defaultBitmap.eraseColor(android.graphics.Color.DKGRAY)
-                return getRoundedCornerBitmap(defaultBitmap, 24f)
-            }
-
-
-            val top9Paths = List(9) { index -> artworkPaths[index % artworkPaths.size] }
-            val bitmaps = top9Paths.mapNotNull { path ->
-                loadScaledBitmap(context, path)?.let { cropToSquare(it) }
-            }
-
-
-
-            val size = 180
-            if (bitmaps.size >= 5) {
-                // 3x3 Grid Collage (9 tiles of 60x60 each)
-                val collage = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-                val canvas = android.graphics.Canvas(collage)
-                val tileSize = 60
-                for (i in 0 until minOf(9, bitmaps.size)) {
-                    val row = i / 3
-                    val col = i % 3
-                    val mini = Bitmap.createScaledBitmap(bitmaps[i], tileSize, tileSize, true)
-                    canvas.drawBitmap(mini, (col * tileSize).toFloat(), (row * tileSize).toFloat(), null)
+            val playlistId = playlistSongs.firstOrNull()?.id ?: 0
+            val coverFile = com.mp3player.util.PlaylistCoverManager.getOrCreateCover(context, playlistId, if (playlistSongs.isNotEmpty()) playlistSongs else fallbackSongs)
+            if (coverFile != null && coverFile.exists()) {
+                try {
+                    val bmp = BitmapFactory.decodeFile(coverFile.absolutePath)
+                    if (bmp != null && !bmp.isRecycled) {
+                        return getRoundedCornerBitmap(bmp, 24f)
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
                 }
-                return getRoundedCornerBitmap(collage, 24f)
-            } else if (bitmaps.size >= 4) {
-                // 2x2 Grid Collage (4 tiles of 90x90 each)
-                val collage = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-                val canvas = android.graphics.Canvas(collage)
-                val tileSize = 90
-                for (i in 0..3) {
-                    val row = i / 2
-                    val col = i % 2
-                    val mini = Bitmap.createScaledBitmap(bitmaps[i], tileSize, tileSize, true)
-                    canvas.drawBitmap(mini, (col * tileSize).toFloat(), (row * tileSize).toFloat(), null)
-                }
-                return getRoundedCornerBitmap(collage, 24f)
-            } else if (bitmaps.isNotEmpty()) {
-                val square = cropToSquare(bitmaps[0])
-                val scaled = Bitmap.createScaledBitmap(square, size, size, true)
-                return getRoundedCornerBitmap(scaled, 24f)
             }
-
-            val defaultBitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+            val defaultBitmap = Bitmap.createBitmap(180, 180, Bitmap.Config.ARGB_8888)
             defaultBitmap.eraseColor(android.graphics.Color.DKGRAY)
             return getRoundedCornerBitmap(defaultBitmap, 24f)
         }
-
 
         private fun loadScaledBitmap(context: Context, path: String?): Bitmap? {
             if (path.isNullOrBlank()) return null

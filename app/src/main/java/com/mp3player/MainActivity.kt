@@ -1521,22 +1521,13 @@ fun SearchScreen(viewModel: MusicViewModel) {
 fun PlaylistCollageCover(
     songs: List<SongEntity>,
     stats: List<com.mp3player.data.dao.SongStats> = emptyList(),
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    playlistId: Int = 0
 ) {
-    val gridArtworks = remember(songs, stats) {
-        val songsWithArt = songs.filter { !it.artworkPath.isNullOrBlank() }
-        if (songsWithArt.isEmpty()) return@remember emptyList<String>()
-        
-        val statsMap = stats.associate { it.songId to it.playCount }
-        val sortedByViews = songsWithArt.sortedWith(
-            compareByDescending<SongEntity> { statsMap[it.id] ?: 0 }
-                .thenBy { it.title }
-        )
-        
-        val top9 = sortedByViews.take(9)
-        List(9) { index -> top9[index % top9.size].artworkPath!! }
+    val context = LocalContext.current
+    val coverFile = remember(songs, playlistId) {
+        com.mp3player.util.PlaylistCoverManager.getOrCreateCover(context, playlistId, songs)
     }
-
 
     Box(
         modifier = modifier
@@ -1548,7 +1539,7 @@ fun PlaylistCollageCover(
             ),
         contentAlignment = Alignment.Center
     ) {
-        if (gridArtworks.isEmpty()) {
+        if (coverFile == null || !coverFile.exists()) {
             Icon(
                 Icons.AutoMirrored.Filled.PlaylistPlay,
                 contentDescription = null,
@@ -1556,26 +1547,16 @@ fun PlaylistCollageCover(
                 modifier = Modifier.size(36.dp)
             )
         } else {
-            Column(modifier = Modifier.fillMaxSize()) {
-                for (row in 0..2) {
-                    Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                        for (col in 0..2) {
-                            val artPath = gridArtworks[row * 3 + col]
-                            AsyncImage(
-                                model = artPath,
-                                contentDescription = null,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .fillMaxHeight(),
-                                contentScale = ContentScale.Crop
-                            )
-                        }
-                    }
-                }
-            }
+            AsyncImage(
+                model = coverFile,
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
+            )
         }
     }
 }
+
 
 @Composable
 fun PlaylistCardCover(
