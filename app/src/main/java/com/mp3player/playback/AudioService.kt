@@ -149,6 +149,7 @@ class AudioService : Service() {
             context = this,
             onTrackEnded = { onTrackEndedListener?.invoke() },
             onTrackStarted = { song ->
+                currentArtworkBitmap = null
                 onTrackStartedListener?.invoke(song)
                 updateNotification(song, playerManager.isPlaying.value)
                 updateWidgetFromService(song, playerManager.isPlaying.value, playerManager.playbackProgress.value)
@@ -186,10 +187,11 @@ class AudioService : Service() {
         CoroutineScope(Dispatchers.Main).launch {
             playerManager.playbackProgress.collect { progressMs ->
                 playerManager.currentPlayingSong.value?.let { song ->
-                    updateWidgetFromService(song, playerManager.isPlaying.value, progressMs)
+                    MusicAppWidgetProvider.updateProgressOnly(this@AudioService, playerManager.isPlaying.value, progressMs, song.durationMs)
                 }
             }
         }
+
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {

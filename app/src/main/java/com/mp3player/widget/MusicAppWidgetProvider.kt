@@ -30,6 +30,9 @@ abstract class BaseMusicWidgetProvider(private val layoutResId: Int) : AppWidget
 
 class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1) {
     companion object {
+        @Volatile
+        private var lastActiveSongId: Int? = null
+
         fun updateWidget(
             context: Context,
             song: SongEntity?,
@@ -41,9 +44,37 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
             recentSongs: List<SongEntity> = emptyList(),
             playlistSongs: List<SongEntity> = emptyList()
         ) {
+            if (song != null) {
+                lastActiveSongId = song.id
+            }
             updateProvider(context, MusicAppWidgetProvider::class.java, R.layout.widget_music_4x1, song, isPlaying, isShuffleEnabled, isRepeatEnabled, artworkBitmap, progressMs, recentSongs, playlistSongs)
             updateProvider(context, MusicWidget4x2Provider::class.java, R.layout.widget_music_4x2, song, isPlaying, isShuffleEnabled, isRepeatEnabled, artworkBitmap, progressMs, recentSongs, playlistSongs)
             updateProvider(context, MusicWidgetSquircleProvider::class.java, R.layout.widget_music_squircle, song, isPlaying, isShuffleEnabled, isRepeatEnabled, artworkBitmap, progressMs, recentSongs, playlistSongs)
+        }
+
+        fun updateProgressOnly(
+            context: Context,
+            isPlaying: Boolean,
+            progressMs: Long,
+            durationMs: Long
+        ) {
+            val appWidgetManager = AppWidgetManager.getInstance(context)
+            val providers = arrayOf(
+                ComponentName(context, MusicAppWidgetProvider::class.java) to R.layout.widget_music_4x1,
+                ComponentName(context, MusicWidget4x2Provider::class.java) to R.layout.widget_music_4x2,
+                ComponentName(context, MusicWidgetSquircleProvider::class.java) to R.layout.widget_music_squircle
+            )
+            for ((comp, layoutId) in providers) {
+                val ids = appWidgetManager.getAppWidgetIds(comp)
+                if (ids.isNotEmpty()) {
+                    val remoteViews = RemoteViews(context.packageName, layoutId)
+                    val playPauseIcon = if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play
+                    remoteViews.setImageViewResource(R.id.widget_btn_play_pause, playPauseIcon)
+                    val progress = if (durationMs > 0) ((progressMs.toFloat() / durationMs) * 1000).toInt() else 0
+                    remoteViews.setProgressBar(R.id.widget_progress_bar, 1000, progress, false)
+                    appWidgetManager.partiallyUpdateAppWidget(ids, remoteViews)
+                }
+            }
         }
 
         private fun getServicePendingIntent(context: Context, requestCode: Int, intent: Intent): PendingIntent {
@@ -68,6 +99,11 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
             recentSongs: List<SongEntity> = emptyList(),
             playlistSongs: List<SongEntity> = emptyList()
         ) {
+            // Reject stale updates referencing a different song than the currently active one
+            if (song != null && lastActiveSongId != null && song.id != lastActiveSongId) {
+                return
+            }
+
             val appWidgetManager = AppWidgetManager.getInstance(context)
             val componentName = ComponentName(context, providerClass)
             val appWidgetIds = appWidgetManager.getAppWidgetIds(componentName)
