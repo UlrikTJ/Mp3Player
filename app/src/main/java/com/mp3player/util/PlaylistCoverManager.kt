@@ -34,15 +34,15 @@ object PlaylistCoverManager {
         }
     }
 
-    fun getOrCreateCover(context: Context, playlistId: Int, songs: List<SongEntity>): File? {
+    fun getOrCreateCover(context: Context, playlistId: Int, songs: List<SongEntity>, stats: List<com.mp3player.data.dao.SongStats> = emptyList()): File? {
         val coverFile = getCoverFile(context, playlistId)
         if (coverFile.exists() && coverFile.length() > 0) {
             return coverFile
         }
-        return generateAndSaveCover(context, playlistId, songs)
+        return generateAndSaveCover(context, playlistId, songs, stats)
     }
 
-    fun generateAndSaveCover(context: Context, playlistId: Int, songs: List<SongEntity>): File? {
+    fun generateAndSaveCover(context: Context, playlistId: Int, songs: List<SongEntity>, stats: List<com.mp3player.data.dao.SongStats> = emptyList()): File? {
         val targetFile = getCoverFile(context, playlistId)
         val songsWithArt = songs.filter { !it.artworkPath.isNullOrBlank() }
         if (songsWithArt.isEmpty()) {
@@ -50,10 +50,21 @@ object PlaylistCoverManager {
             return null
         }
 
-        val artworkPaths = songsWithArt.mapNotNull { it.artworkPath }.filter { it.isNotBlank() }.distinct().take(9)
+        val sortedByPlays = if (stats.isNotEmpty()) {
+            val statsMap = stats.associate { it.songId to it.playCount }
+            songsWithArt.sortedWith(
+                compareByDescending<SongEntity> { statsMap[it.id] ?: 0 }
+                    .thenBy { it.title }
+            )
+        } else {
+            songsWithArt
+        }
+
+        val artworkPaths = sortedByPlays.mapNotNull { it.artworkPath }.filter { it.isNotBlank() }.distinct().take(9)
         val loadedBitmaps = artworkPaths.mapNotNull { path ->
             loadScaledBitmap(context, path)?.let { cropToSquare(it) }
         }
+
 
         if (loadedBitmaps.isEmpty()) {
             if (targetFile.exists()) targetFile.delete()

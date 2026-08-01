@@ -1525,18 +1525,24 @@ fun PlaylistCollageCover(
     playlistId: Int = 0
 ) {
     val context = LocalContext.current
-    val coverFile = remember(songs, playlistId) {
-        com.mp3player.util.PlaylistCoverManager.getOrCreateCover(context, playlistId, songs)
+    val coverFile = remember(songs, playlistId, stats) {
+        com.mp3player.util.PlaylistCoverManager.getOrCreateCover(context, playlistId, songs, stats)
     }
 
-    val gridArtworks = remember(songs) {
+    val gridArtworks = remember(songs, stats) {
         val songsWithArt = songs.filter { !it.artworkPath.isNullOrBlank() }
         if (songsWithArt.isEmpty()) emptyList<String>()
         else {
-            val top9 = songsWithArt.take(9)
+            val statsMap = stats.associate { it.songId to it.playCount }
+            val sortedByViews = songsWithArt.sortedWith(
+                compareByDescending<SongEntity> { statsMap[it.id] ?: 0 }
+                    .thenBy { it.title }
+            )
+            val top9 = sortedByViews.take(9)
             List(9) { index -> top9[index % top9.size].artworkPath!! }
         }
     }
+
 
     Box(
         modifier = modifier
