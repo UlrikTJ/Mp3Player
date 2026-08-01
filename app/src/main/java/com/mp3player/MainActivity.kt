@@ -2195,38 +2195,58 @@ fun PlaylistDetailView(
 
                                 Spacer(modifier = Modifier.height(6.dp))
 
-                                // Playlist Management Options Row
+                                // Playlist Management Options Row - Responsive compact design with unique icons
                                 Row(
-                                    modifier = Modifier.fillMaxWidth(),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 4.dp),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    TextButton(onClick = { showRenameDialog = true }) {
-                                        Icon(Icons.Default.Edit, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Rename", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
+                                    TextButton(
+                                        onClick = { showRenameDialog = true },
+                                        contentPadding = PaddingValues(horizontal = 2.dp, vertical = 0.dp)
+                                    ) {
+                                        Icon(Icons.Default.Edit, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(15.dp))
+                                        Spacer(modifier = Modifier.width(3.dp))
+                                        Text("Rename", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp, maxLines = 1, softWrap = false)
                                     }
-                                    TextButton(onClick = { showAddSongsDialog = true }) {
-                                        Icon(Icons.Default.Add, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Add", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
+                                    TextButton(
+                                        onClick = { showAddSongsDialog = true },
+                                        contentPadding = PaddingValues(horizontal = 2.dp, vertical = 0.dp)
+                                    ) {
+                                        Icon(Icons.Default.Add, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(15.dp))
+                                        Spacer(modifier = Modifier.width(3.dp))
+                                        Text("Add", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp, maxLines = 1, softWrap = false)
                                     }
-                                    TextButton(onClick = { isEditMode = !isEditMode }) {
-                                        Icon(Icons.Default.Edit, contentDescription = null, tint = if (isEditMode) MaterialTheme.colorScheme.primary else Color.LightGray, modifier = Modifier.size(16.dp))
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Edit", color = if (isEditMode) MaterialTheme.colorScheme.primary else Color.LightGray, fontSize = 12.sp)
+
+                                    TextButton(
+                                        onClick = { isEditMode = !isEditMode },
+                                        contentPadding = PaddingValues(horizontal = 2.dp, vertical = 0.dp)
+                                    ) {
+                                        Icon(Icons.Default.DragHandle, contentDescription = null, tint = if (isEditMode) MaterialTheme.colorScheme.primary else Color.LightGray, modifier = Modifier.size(15.dp))
+                                        Spacer(modifier = Modifier.width(3.dp))
+                                        Text("Reorder", color = if (isEditMode) MaterialTheme.colorScheme.primary else Color.LightGray, fontSize = 11.sp, maxLines = 1, softWrap = false)
                                     }
-                                    TextButton(onClick = { showPlaylistStats = true }) {
-                                        Icon(Icons.Default.BarChart, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Stats", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
+
+                                    TextButton(
+                                        onClick = { showPlaylistStats = true },
+                                        contentPadding = PaddingValues(horizontal = 2.dp, vertical = 0.dp)
+                                    ) {
+                                        Icon(Icons.Default.BarChart, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(15.dp))
+                                        Spacer(modifier = Modifier.width(3.dp))
+                                        Text("Stats", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp, maxLines = 1, softWrap = false)
                                     }
-                                    TextButton(onClick = { showStatsDialog = true }) {
-                                        Icon(Icons.Default.Tune, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Options", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
+                                    TextButton(
+                                        onClick = { showStatsDialog = true },
+                                        contentPadding = PaddingValues(horizontal = 2.dp, vertical = 0.dp)
+                                    ) {
+                                        Icon(Icons.Default.Tune, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(15.dp))
+                                        Spacer(modifier = Modifier.width(3.dp))
+                                        Text("Options", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp, maxLines = 1, softWrap = false)
                                     }
                                 }
+
 
                                 Spacer(modifier = Modifier.height(8.dp))
                                 HorizontalDivider(color = Color.DarkGray.copy(alpha = 0.5f), thickness = 1.dp)

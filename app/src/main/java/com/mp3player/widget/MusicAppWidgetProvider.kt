@@ -271,22 +271,43 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
         }
 
         private fun createPlaylistCollageBitmap(context: Context, playlistSongs: List<SongEntity>, fallbackSongs: List<SongEntity> = emptyList()): Bitmap {
-            val playlistId = playlistSongs.firstOrNull()?.id ?: 0
-            val coverFile = com.mp3player.util.PlaylistCoverManager.getOrCreateCover(context, playlistId, if (playlistSongs.isNotEmpty()) playlistSongs else fallbackSongs)
-            if (coverFile != null && coverFile.exists()) {
-                try {
-                    val bmp = BitmapFactory.decodeFile(coverFile.absolutePath)
-                    if (bmp != null && !bmp.isRecycled) {
-                        return getRoundedCornerBitmap(bmp, 24f)
-                    }
-                } catch (e: Exception) {
-                    e.printStackTrace()
+            val sourceSongs = if (playlistSongs.any { !it.artworkPath.isNullOrBlank() }) playlistSongs else fallbackSongs
+            val songsWithArt = sourceSongs.filter { !it.artworkPath.isNullOrBlank() }
+            
+            val loadedBitmaps = songsWithArt.mapNotNull { song ->
+                loadScaledBitmap(context, song.artworkPath)?.let { cropToSquare(it) }
+            }.distinct().take(9)
+
+            val size = 180
+            if (loadedBitmaps.isNotEmpty()) {
+                val top9Bitmaps = List(9) { index -> loadedBitmaps[index % loadedBitmaps.size] }
+                val collage = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+                val canvas = android.graphics.Canvas(collage)
+                val tileSize = 60
+                for (i in 0 until 9) {
+                    val row = i / 3
+                    val col = i % 3
+                    val mini = Bitmap.createScaledBitmap(top9Bitmaps[i], tileSize, tileSize, true)
+                    canvas.drawBitmap(mini, (col * tileSize).toFloat(), (row * tileSize).toFloat(), null)
                 }
+                return getRoundedCornerBitmap(collage, 24f)
             }
-            val defaultBitmap = Bitmap.createBitmap(180, 180, Bitmap.Config.ARGB_8888)
-            defaultBitmap.eraseColor(android.graphics.Color.DKGRAY)
-            return getRoundedCornerBitmap(defaultBitmap, 24f)
+
+            // Fallback: Sleek dark card with music note icon (never a plain gray box)
+            val cardBmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+            val canvas = android.graphics.Canvas(cardBmp)
+            val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                color = android.graphics.Color.parseColor("#2A2A2A")
+            }
+            canvas.drawRect(0f, 0f, size.toFloat(), size.toFloat(), paint)
+            
+            val iconDrawable = androidx.core.content.ContextCompat.getDrawable(context, R.drawable.ic_music_note)
+            iconDrawable?.setBounds(45, 45, 135, 135)
+            iconDrawable?.draw(canvas)
+            
+            return getRoundedCornerBitmap(cardBmp, 24f)
         }
+
 
         private fun loadScaledBitmap(context: Context, path: String?): Bitmap? {
             if (path.isNullOrBlank()) return null
