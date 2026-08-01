@@ -129,8 +129,8 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
                         if (rawBitmap != null && !rawBitmap.isRecycled) {
                             try {
                                 val squared = cropToSquare(rawBitmap)
-                                val scaled = Bitmap.createScaledBitmap(squared, 360, 360, true)
-                                val rounded = getRoundedCornerBitmap(scaled, 32f)
+                                val scaled = Bitmap.createScaledBitmap(squared, 160, 160, true)
+                                val rounded = getRoundedCornerBitmap(scaled, 24f)
                                 remoteViews.setImageViewBitmap(R.id.widget_album_art, rounded)
                                 artLoaded = true
                             } catch (e: Exception) {
@@ -140,16 +140,15 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
                     }
                     if (!artLoaded) {
                         // Song playing but artwork missing or loading: show consistent 1:1 rounded placeholder (never flash 3x3 collage)
-                        val defaultBitmap = Bitmap.createBitmap(360, 360, Bitmap.Config.ARGB_8888)
+                        val defaultBitmap = Bitmap.createBitmap(160, 160, Bitmap.Config.ARGB_8888)
                         defaultBitmap.eraseColor(android.graphics.Color.DKGRAY)
-                        remoteViews.setImageViewBitmap(R.id.widget_album_art, getRoundedCornerBitmap(defaultBitmap, 32f))
+                        remoteViews.setImageViewBitmap(R.id.widget_album_art, getRoundedCornerBitmap(defaultBitmap, 24f))
                     }
                 } else {
                     // Idle state (no active song): Use the playlist's 3x3 collage bitmap
                     val collageBmp = createPlaylistCollageBitmap(context, playlistSongs, recentSongs)
                     remoteViews.setImageViewBitmap(R.id.widget_album_art, collageBmp)
                 }
-
 
 
                 // Shuffle & Repeat active vector icons & intents for 4x2 widget
@@ -196,9 +195,10 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
                             if (bmp != null && !bmp.isRecycled) {
                                 try {
                                     val squared = cropToSquare(bmp)
-                                    val miniScaled = Bitmap.createScaledBitmap(squared, 120, 120, true)
-                                    val roundedMini = getRoundedCornerBitmap(miniScaled, 20f)
+                                    val miniScaled = Bitmap.createScaledBitmap(squared, 72, 72, true)
+                                    val roundedMini = getRoundedCornerBitmap(miniScaled, 14f)
                                     remoteViews.setImageViewBitmap(slotIds[i], roundedMini)
+
                                 } catch (e: Exception) {
                                     remoteViews.setImageViewResource(slotIds[i], R.drawable.ic_music_note)
                                 }
@@ -278,20 +278,21 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
                 loadScaledBitmap(context, song.artworkPath)?.let { cropToSquare(it) }
             }.distinct().take(9)
 
-            val size = 180
+            val size = 120
             if (loadedBitmaps.isNotEmpty()) {
                 val top9Bitmaps = List(9) { index -> loadedBitmaps[index % loadedBitmaps.size] }
                 val collage = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
                 val canvas = android.graphics.Canvas(collage)
-                val tileSize = 60
+                val tileSize = 40
                 for (i in 0 until 9) {
                     val row = i / 3
                     val col = i % 3
                     val mini = Bitmap.createScaledBitmap(top9Bitmaps[i], tileSize, tileSize, true)
                     canvas.drawBitmap(mini, (col * tileSize).toFloat(), (row * tileSize).toFloat(), null)
                 }
-                return getRoundedCornerBitmap(collage, 24f)
+                return getRoundedCornerBitmap(collage, 20f)
             }
+
 
             // Fallback: Sleek dark card with music note icon (never a plain gray box)
             val cardBmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
