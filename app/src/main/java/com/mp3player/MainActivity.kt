@@ -46,6 +46,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SkipNext
@@ -182,6 +183,9 @@ class MainActivity : ComponentActivity() {
             boundService.onRecentlyPlayedListener = {
                 viewModel.recentlyPlayedSongs.value
             }
+            boundService.onActivePlaylistSongsListener = {
+                viewModel.activePlaylistSongs.value
+            }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -278,6 +282,374 @@ fun SplashScreen() {
 }
 
 @Composable
+fun HomeScreen(
+    viewModel: MusicViewModel,
+    onOpenLibrary: () -> Unit,
+    onOpenPlaylists: () -> Unit,
+    onOpenSettings: () -> Unit
+) {
+    val allSongs by viewModel.allSongs.collectAsState()
+    val playlists by viewModel.allPlaylists.collectAsState()
+    val recentSongs by viewModel.recentlyPlayedSongs.collectAsState()
+    val playerManager by viewModel.playerManager.collectAsState()
+    val currentSong = playerManager?.currentPlayingSong?.collectAsState(null)?.value
+    val isPlaying = playerManager?.isPlaying?.collectAsState(false)?.value ?: false
+    val songStats by viewModel.songStats.collectAsState()
+
+    var showQueueDialog by remember { mutableStateOf(false) }
+    var showGlobalStats by remember { mutableStateOf(false) }
+
+    val greeting = remember {
+        val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+        when (hour) {
+            in 4..11 -> "Good Morning ☀️"
+            in 12..17 -> "Good Afternoon 🌤️"
+            else -> "Good Evening 🌙"
+        }
+    }
+
+    val totalPlays = remember(songStats) { songStats.sumOf { it.totalPlays } }
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp)
+    ) {
+        item {
+            Spacer(modifier = Modifier.height(8.dp))
+            // Greeting Banner Card
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f))
+            ) {
+                Column(modifier = Modifier.padding(20.dp)) {
+                    Text(
+                        text = greeting,
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = Color.White,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "🎵 ${allSongs.size} tracks in library • ${playlists.size} playlists • $totalPlays plays",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.Gray
+                    )
+                }
+            }
+        }
+
+        // Hero Resume / Now Playing Card
+        item {
+            val heroSong = currentSong ?: recentSongs.firstOrNull() ?: allSongs.firstOrNull()
+            if (heroSong != null) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            if (currentSong != null) {
+                                if (isPlaying) playerManager?.pause() else playerManager?.resume()
+                            } else {
+                                viewModel.playSongFromLibrary(heroSong, null)
+                            }
+                        },
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
+                    ),
+                    border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.6f))
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (heroSong.artworkPath != null) {
+                            AsyncImage(
+                                model = heroSong.artworkPath,
+                                contentDescription = "Hero Art",
+                                modifier = Modifier
+                                    .size(64.dp)
+                                    .clip(RoundedCornerShape(12.dp)),
+                                contentScale = ContentScale.Crop
+                            )
+                        } else {
+                            Box(
+                                modifier = Modifier
+                                    .size(64.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color.DarkGray),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.LightGray)
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.width(16.dp))
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = if (currentSong != null) "NOW PLAYING" else "QUICK RESUME",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                                letterSpacing = 1.sp
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = heroSong.title,
+                                color = Color.White,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                                maxLines = 1
+                            )
+                            Text(
+                                text = heroSong.artist,
+                                color = Color.Gray,
+                                style = MaterialTheme.typography.bodySmall,
+                                maxLines = 1
+                            )
+                        }
+
+                        IconButton(
+                            onClick = {
+                                if (currentSong != null) {
+                                    if (isPlaying) playerManager?.pause() else playerManager?.resume()
+                                } else {
+                                    viewModel.playSongFromLibrary(heroSong, null)
+                                }
+                            },
+                            modifier = Modifier
+                                .size(48.dp)
+                                .background(MaterialTheme.colorScheme.primary, CircleShape)
+                        ) {
+                            Icon(
+                                imageVector = if (isPlaying && currentSong != null) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                contentDescription = "Play/Pause",
+                                tint = Color.Black
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Quick Action Chips Row
+        item {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                AssistChip(
+                    onClick = { viewModel.playAllShuffled() },
+                    label = { Text("🔀 Shuffle All", color = Color.White, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold) },
+                    colors = AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.surface)
+                )
+                AssistChip(
+                    onClick = { onOpenLibrary() },
+                    label = { Text("🎵 All Tracks", color = Color.White, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold) },
+                    colors = AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.surface)
+                )
+                AssistChip(
+                    onClick = { showGlobalStats = true },
+                    label = { Text("📊 Library Stats", color = Color.White, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold) },
+                    colors = AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.surface)
+                )
+                AssistChip(
+                    onClick = { showQueueDialog = true },
+                    label = { Text("⚡ Queue", color = Color.White, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold) },
+                    colors = AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.surface)
+                )
+            }
+        }
+
+        // Recently Played Section
+        if (recentSongs.isNotEmpty()) {
+            item {
+                Column {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "Recently Played",
+                            style = MaterialTheme.typography.titleLarge,
+                            color = Color.White,
+                            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                        )
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        recentSongs.forEach { song ->
+                            Card(
+                                modifier = Modifier
+                                    .width(130.dp)
+                                    .clickable { viewModel.playSongFromLibrary(song, null) },
+                                shape = RoundedCornerShape(12.dp),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                            ) {
+                                Column(modifier = Modifier.padding(8.dp)) {
+                                    if (song.artworkPath != null) {
+                                        AsyncImage(
+                                            model = song.artworkPath,
+                                            contentDescription = null,
+                                            modifier = Modifier
+                                                .size(114.dp)
+                                                .clip(RoundedCornerShape(8.dp)),
+                                            contentScale = ContentScale.Crop
+                                        )
+                                    } else {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(114.dp)
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(Color.DarkGray),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.LightGray)
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text(
+                                        text = song.title,
+                                        color = Color.White,
+                                        fontSize = 13.sp,
+                                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                                        maxLines = 1
+                                    )
+                                    Text(
+                                        text = song.artist,
+                                        color = Color.Gray,
+                                        fontSize = 11.sp,
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                }
+            }
+        }
+
+        // Top Playlists Section
+        if (playlists.isNotEmpty()) {
+            item {
+                Column {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "My Playlists",
+                            style = MaterialTheme.typography.titleLarge,
+                            color = Color.White,
+                            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                        )
+                        TextButton(onClick = onOpenPlaylists) {
+                            Text("See All", color = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        playlists.take(4).forEach { playlist ->
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { viewModel.selectPlaylist(playlist.id) },
+                                shape = RoundedCornerShape(12.dp),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    PlaylistCardCover(
+                                        playlistId = playlist.id,
+                                        viewModel = viewModel,
+                                        modifier = Modifier.size(50.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(14.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = playlist.name,
+                                            color = Color.White,
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                                            maxLines = 1
+                                        )
+                                    }
+                                    Icon(
+                                        imageVector = Icons.Default.PlayArrow,
+                                        contentDescription = "Open Playlist",
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        item {
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+    }
+
+    if (showQueueDialog) {
+        QueueDialog(viewModel = viewModel, onDismiss = { showQueueDialog = false })
+    }
+
+    if (showGlobalStats) {
+        val statsSortCol by viewModel.statsSortColumn.collectAsState()
+        val statsSortAsc by viewModel.statsSortAscending.collectAsState()
+        val keepersLeaderboard by viewModel.keepersLeaderboard.collectAsState()
+        val sortedStats = remember(songStats, statsSortCol, statsSortAsc) {
+            val comparator = when (statsSortCol) {
+                MusicViewModel.StatsSortColumn.TITLE -> compareBy<SongStats> { it.title }
+                MusicViewModel.StatsSortColumn.PLAY_COUNT -> compareBy { it.playCount }
+                MusicViewModel.StatsSortColumn.SKIP_COUNT -> compareBy { it.skipCount }
+                MusicViewModel.StatsSortColumn.SKIP_RATE -> compareBy { it.skipRate }
+                MusicViewModel.StatsSortColumn.KEEPER_COUNT -> compareBy { it.keeperCount }
+            }
+            if (statsSortAsc) songStats.sortedWith(comparator) else songStats.sortedWith(comparator.reversed())
+        }
+        StatsScreen(
+            stats = sortedStats,
+            keepers = keepersLeaderboard,
+            sortColumn = statsSortCol,
+            sortAscending = statsSortAsc,
+            onSortChange = { col ->
+                if (viewModel.statsSortColumn.value == col) {
+                    viewModel.statsSortAscending.value = !viewModel.statsSortAscending.value
+                } else {
+                    viewModel.statsSortColumn.value = col
+                    viewModel.statsSortAscending.value = false
+                }
+            },
+            onToggleAscending = { viewModel.statsSortAscending.value = !viewModel.statsSortAscending.value },
+            title = "Global Library Stats",
+            onDismiss = { showGlobalStats = false }
+        )
+    }
+}
+
+@Composable
 fun MainScreen(viewModel: MusicViewModel) {
     val allSongs by viewModel.allSongs.collectAsState()
     val allPlaylists by viewModel.allPlaylists.collectAsState()
@@ -303,6 +675,8 @@ fun MainScreen(viewModel: MusicViewModel) {
     val playerManager by viewModel.playerManager.collectAsState()
     val currentSong = playerManager?.currentPlayingSong?.collectAsState(null)?.value
 
+    var showLibraryScreen by remember { mutableStateOf(false) }
+
     Scaffold(
         bottomBar = {
             Column {
@@ -317,37 +691,41 @@ fun MainScreen(viewModel: MusicViewModel) {
                     tonalElevation = 8.dp
                 ) {
                     NavigationBarItem(
-                        icon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = "Library") },
-                        label = { Text("Library") },
-                        selected = selectedTab == 0 && activePlaylist == null,
+                        icon = { Icon(Icons.Default.Home, contentDescription = "Home") },
+                        label = { Text("Home") },
+                        selected = selectedTab == 0 && activePlaylist == null && !showLibraryScreen,
                         onClick = { 
                             selectedTab = 0 
+                            showLibraryScreen = false
                             viewModel.selectPlaylist(null)
                         }
                     )
                     NavigationBarItem(
                         icon = { Icon(Icons.Default.Search, contentDescription = "Search") },
                         label = { Text("Search") },
-                        selected = selectedTab == 1 && activePlaylist == null,
+                        selected = selectedTab == 1 && activePlaylist == null && !showLibraryScreen,
                         onClick = { 
                             selectedTab = 1 
+                            showLibraryScreen = false
                             viewModel.selectPlaylist(null)
                         }
                     )
                     NavigationBarItem(
                         icon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = "Playlists") },
                         label = { Text("Playlists") },
-                        selected = selectedTab == 2 || activePlaylist != null,
+                        selected = (selectedTab == 2 || activePlaylist != null) && !showLibraryScreen,
                         onClick = { 
                             selectedTab = 2 
+                            showLibraryScreen = false
                         }
                     )
                     NavigationBarItem(
                         icon = { Icon(Icons.Default.Settings, contentDescription = "Settings") },
                         label = { Text("Settings") },
-                        selected = selectedTab == 3 && activePlaylist == null,
+                        selected = (selectedTab == 3 || showLibraryScreen) && activePlaylist == null,
                         onClick = { 
                             selectedTab = 3 
+                            showLibraryScreen = false
                             viewModel.selectPlaylist(null)
                         }
                     )
@@ -367,16 +745,37 @@ fun MainScreen(viewModel: MusicViewModel) {
                     viewModel = viewModel,
                     onBack = { viewModel.selectPlaylist(null) }
                 )
+            } else if (showLibraryScreen) {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(onClick = { showLibraryScreen = false }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
+                        }
+                        Text("Music Library", style = MaterialTheme.typography.titleMedium, color = Color.White, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                    }
+                    Box(modifier = Modifier.weight(1f)) {
+                        LibraryScreen(viewModel)
+                    }
+                }
             } else {
                 when (selectedTab) {
-                    0 -> LibraryScreen(viewModel)
+                    0 -> HomeScreen(
+                        viewModel = viewModel, 
+                        onOpenLibrary = { showLibraryScreen = true },
+                        onOpenPlaylists = { selectedTab = 2 },
+                        onOpenSettings = { selectedTab = 3 }
+                    )
                     1 -> SearchScreen(viewModel)
                     2 -> PlaylistsScreen(viewModel)
-                    3 -> SettingsScreen(viewModel)
+                    3 -> SettingsScreen(viewModel, onOpenLibrary = { showLibraryScreen = true })
                 }
             }
         }
     }
+
 
     if (viewModel.showRestorePrompt) {
         val context = LocalContext.current
@@ -2498,7 +2897,7 @@ fun PlaylistStatsDialog(
 }
 
 @Composable
-fun SettingsScreen(viewModel: MusicViewModel) {
+fun SettingsScreen(viewModel: MusicViewModel, onOpenLibrary: () -> Unit = {}) {
     val serverIp by viewModel.serverIp.collectAsState()
     val crossfade by viewModel.crossfadeSeconds.collectAsState()
     val useWeightedShuffle by viewModel.useWeightedShuffle.collectAsState()
@@ -2512,6 +2911,31 @@ fun SettingsScreen(viewModel: MusicViewModel) {
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         Text("App Settings", style = MaterialTheme.typography.headlineMedium, color = Color.White)
+
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onOpenLibrary() },
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f)),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Icon(Icons.AutoMirrored.Filled.List, contentDescription = "Music Library", tint = MaterialTheme.colorScheme.primary)
+                    Column {
+                        Text("Music Library", style = MaterialTheme.typography.titleMedium, color = Color.White, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                        Text("View all scanned local audio files & downloads", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    }
+                }
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.graphicsLayer { rotationZ = 180f })
+            }
+        }
         
         OutlinedTextField(
             value = ipInput,

@@ -160,6 +160,16 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val _activePlaylistId = MutableStateFlow<Int?>(null)
     val activePlaylistId: StateFlow<Int?> = _activePlaylistId
 
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val activePlaylistSongs: StateFlow<List<SongEntity>> = _activePlaylistId
+        .flatMapLatest { playlistId ->
+            if (playlistId != null) {
+                musicDao.getSongsForPlaylistFlow(playlistId)
+            } else {
+                flowOf(emptyList())
+            }
+        }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
     // Recently played unique songs for widget
     private val _recentlyPlayedSongs = MutableStateFlow<List<SongEntity>>(emptyList())
     val recentlyPlayedSongs: StateFlow<List<SongEntity>> = _recentlyPlayedSongs

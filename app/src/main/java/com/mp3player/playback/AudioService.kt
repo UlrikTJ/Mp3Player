@@ -52,12 +52,14 @@ class AudioService : Service() {
     var onToggleShuffleListener: (() -> Unit)? = null
     var onToggleRepeatListener: (() -> Unit)? = null
     var onRecentlyPlayedListener: (() -> List<SongEntity>)? = null
+    var onActivePlaylistSongsListener: (() -> List<SongEntity>)? = null
 
     private fun updateWidgetFromService(song: SongEntity?, isPlaying: Boolean, progressMs: Long = 0L) {
         val sharedPrefs = getSharedPreferences("Mp3PlayerPrefs", MODE_PRIVATE)
         val shuffle = sharedPrefs.getBoolean("weighted_shuffle", true)
         val repeat = sharedPrefs.getBoolean("is_looping", false)
         val recentSongs = onRecentlyPlayedListener?.invoke() ?: emptyList()
+        val playlistSongs = onActivePlaylistSongsListener?.invoke() ?: emptyList()
         MusicAppWidgetProvider.updateWidget(
             context = this,
             song = song,
@@ -66,7 +68,8 @@ class AudioService : Service() {
             isRepeatEnabled = repeat,
             artworkBitmap = currentArtworkBitmap,
             progressMs = progressMs,
-            recentSongs = recentSongs
+            recentSongs = recentSongs,
+            playlistSongs = playlistSongs
         )
     }
 

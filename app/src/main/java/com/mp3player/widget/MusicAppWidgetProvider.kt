@@ -38,11 +38,12 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
             isRepeatEnabled: Boolean = false,
             artworkBitmap: Bitmap? = null,
             progressMs: Long = 0L,
-            recentSongs: List<SongEntity> = emptyList()
+            recentSongs: List<SongEntity> = emptyList(),
+            playlistSongs: List<SongEntity> = emptyList()
         ) {
-            updateProvider(context, MusicAppWidgetProvider::class.java, R.layout.widget_music_4x1, song, isPlaying, isShuffleEnabled, isRepeatEnabled, artworkBitmap, progressMs, recentSongs)
-            updateProvider(context, MusicWidget4x2Provider::class.java, R.layout.widget_music_4x2, song, isPlaying, isShuffleEnabled, isRepeatEnabled, artworkBitmap, progressMs, recentSongs)
-            updateProvider(context, MusicWidgetSquircleProvider::class.java, R.layout.widget_music_squircle, song, isPlaying, isShuffleEnabled, isRepeatEnabled, artworkBitmap, progressMs, recentSongs)
+            updateProvider(context, MusicAppWidgetProvider::class.java, R.layout.widget_music_4x1, song, isPlaying, isShuffleEnabled, isRepeatEnabled, artworkBitmap, progressMs, recentSongs, playlistSongs)
+            updateProvider(context, MusicWidget4x2Provider::class.java, R.layout.widget_music_4x2, song, isPlaying, isShuffleEnabled, isRepeatEnabled, artworkBitmap, progressMs, recentSongs, playlistSongs)
+            updateProvider(context, MusicWidgetSquircleProvider::class.java, R.layout.widget_music_squircle, song, isPlaying, isShuffleEnabled, isRepeatEnabled, artworkBitmap, progressMs, recentSongs, playlistSongs)
         }
 
         private fun getServicePendingIntent(context: Context, requestCode: Int, intent: Intent): PendingIntent {
@@ -64,7 +65,8 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
             isRepeatEnabled: Boolean,
             artworkBitmap: Bitmap?,
             progressMs: Long,
-            recentSongs: List<SongEntity> = emptyList()
+            recentSongs: List<SongEntity> = emptyList(),
+            playlistSongs: List<SongEntity> = emptyList()
         ) {
             val appWidgetManager = AppWidgetManager.getInstance(context)
             val componentName = ComponentName(context, providerClass)
@@ -126,7 +128,7 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
                     remoteViews.setProgressBar(R.id.widget_progress_bar, 1000, progress, false)
 
                     // Active playlist collage thumbnail slot (2x2 grid collage)
-                    val collageBmp = createPlaylistCollageBitmap(context, recentSongs, song)
+                    val collageBmp = createPlaylistCollageBitmap(context, playlistSongs, recentSongs, song)
                     remoteViews.setImageViewBitmap(R.id.widget_recent_playlist_art, collageBmp)
 
                     // Recently played thumbnails in bottom row (1:1 square cropped)
@@ -173,7 +175,11 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
                 }
                 remoteViews.setOnClickPendingIntent(R.id.widget_btn_next, getServicePendingIntent(context, 12, nextIntent))
 
-                val appIntent = Intent(context, MainActivity::class.java)
+                val appIntent = Intent(context, MainActivity::class.java).apply {
+                    action = Intent.ACTION_MAIN
+                    addCategory(Intent.CATEGORY_LAUNCHER)
+                    flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_NEW_TASK
+                }
                 val appPendingIntent = PendingIntent.getActivity(
                     context, 0, appIntent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
                 )
@@ -193,8 +199,9 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
             return Bitmap.createBitmap(bitmap, x, y, size, size)
         }
 
-        private fun createPlaylistCollageBitmap(context: Context, recentSongs: List<SongEntity>, currentSong: SongEntity?): Bitmap {
+        private fun createPlaylistCollageBitmap(context: Context, playlistSongs: List<SongEntity>, recentSongs: List<SongEntity>, currentSong: SongEntity?): Bitmap {
             val allSongs = mutableListOf<SongEntity>()
+            allSongs.addAll(playlistSongs)
             currentSong?.let { allSongs.add(it) }
             allSongs.addAll(recentSongs)
             
