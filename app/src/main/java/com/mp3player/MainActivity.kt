@@ -186,6 +186,12 @@ class MainActivity : ComponentActivity() {
             boundService.onActivePlaylistSongsListener = {
                 viewModel.activePlaylistSongs.value
             }
+            boundService.onUpcomingOrTopSongsListener = {
+                viewModel.upcomingOrTopSongs.value
+            }
+            boundService.onPlaySpecificSongListener = { songId ->
+                viewModel.playSongById(songId)
+            }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {

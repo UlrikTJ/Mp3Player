@@ -53,12 +53,14 @@ class AudioService : Service() {
     var onToggleRepeatListener: (() -> Unit)? = null
     var onRecentlyPlayedListener: (() -> List<SongEntity>)? = null
     var onActivePlaylistSongsListener: (() -> List<SongEntity>)? = null
+    var onUpcomingOrTopSongsListener: (() -> List<SongEntity>)? = null
+    var onPlaySpecificSongListener: ((Int) -> Unit)? = null
 
     private fun updateWidgetFromService(song: SongEntity?, isPlaying: Boolean, progressMs: Long = 0L) {
         val sharedPrefs = getSharedPreferences("Mp3PlayerPrefs", MODE_PRIVATE)
         val shuffle = sharedPrefs.getBoolean("weighted_shuffle", true)
         val repeat = sharedPrefs.getBoolean("is_looping", false)
-        val recentSongs = onRecentlyPlayedListener?.invoke() ?: emptyList()
+        val upcomingSongs = onUpcomingOrTopSongsListener?.invoke() ?: emptyList()
         val playlistSongs = onActivePlaylistSongsListener?.invoke() ?: emptyList()
         MusicAppWidgetProvider.updateWidget(
             context = this,
@@ -68,7 +70,7 @@ class AudioService : Service() {
             isRepeatEnabled = repeat,
             artworkBitmap = currentArtworkBitmap,
             progressMs = progressMs,
-            recentSongs = recentSongs,
+            recentSongs = upcomingSongs,
             playlistSongs = playlistSongs
         )
     }
@@ -213,6 +215,12 @@ class AudioService : Service() {
             }
             ACTION_TOGGLE_REPEAT -> {
                 onToggleRepeatListener?.invoke()
+            }
+            ACTION_PLAY_SPECIFIC_SONG -> {
+                val songId = intent.getIntExtra(EXTRA_SONG_ID, -1)
+                if (songId != -1) {
+                    onPlaySpecificSongListener?.invoke(songId)
+                }
             }
         }
         return Service.START_NOT_STICKY
@@ -464,5 +472,7 @@ class AudioService : Service() {
         const val ACTION_SKIP_PREVIOUS = "com.mp3player.ACTION_SKIP_PREVIOUS"
         const val ACTION_TOGGLE_SHUFFLE = "com.mp3player.ACTION_TOGGLE_SHUFFLE"
         const val ACTION_TOGGLE_REPEAT = "com.mp3player.ACTION_TOGGLE_REPEAT"
+        const val ACTION_PLAY_SPECIFIC_SONG = "com.mp3player.ACTION_PLAY_SPECIFIC_SONG"
+        const val EXTRA_SONG_ID = "extra_song_id"
     }
 }

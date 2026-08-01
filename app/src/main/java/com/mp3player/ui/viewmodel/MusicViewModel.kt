@@ -161,18 +161,43 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val activePlaylistId: StateFlow<Int?> = _activePlaylistId
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    val activePlaylistSongs: StateFlow<List<SongEntity>> = _activePlaylistId
-        .flatMapLatest { playlistId ->
-            if (playlistId != null) {
-                musicDao.getSongsForPlaylistFlow(playlistId)
+    val activePlaylistSongs: StateFlow<List<SongEntity>> = combine(_activePlaylistId, allPlaylists) { playlistId, playlists ->
+        playlistId ?: playlists.firstOrNull()?.id
+    }.flatMapLatest { pId ->
+        if (pId != null) {
+            musicDao.getSongsForPlaylistFlow(pId)
+        } else {
+            flowOf(emptyList())
+        }
+    }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    val upcomingOrTopSongs: StateFlow<List<SongEntity>> = combine(_currentQueue, _playerManager, allSongs, songStats) { queue, pManager, songs, stats ->
+        val playingSong = pManager?.currentPlayingSong?.value
+        if (playingSong != null && queue.isNotEmpty()) {
+            val currentIdx = queue.indexOfFirst { it.id == playingSong.id }
+            if (currentIdx >= 0 && currentIdx + 1 < queue.size) {
+                queue.subList(currentIdx + 1, minOf(currentIdx + 7, queue.size))
             } else {
-                flowOf(emptyList())
+                queue.take(6)
             }
-        }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+        } else {
+            val sortedByPlays = stats.sortedByDescending { it.playCount }.mapNotNull { stat ->
+                songs.find { it.id == stat.songId }
+            }.distinct().take(6)
+            if (sortedByPlays.isNotEmpty()) sortedByPlays else songs.take(6)
+        }
+    }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     // Recently played unique songs for widget
     private val _recentlyPlayedSongs = MutableStateFlow<List<SongEntity>>(emptyList())
     val recentlyPlayedSongs: StateFlow<List<SongEntity>> = _recentlyPlayedSongs
+
+    fun playSongById(songId: Int) {
+        val song = allSongs.value.find { it.id == songId }
+        if (song != null) {
+            playSongFromLibrary(song, _activePlaylistId.value)
+        }
+    }
 
     // Stats sorting
     enum class StatsSortColumn { TITLE, PLAY_COUNT, SKIP_COUNT, SKIP_RATE, KEEPER_COUNT }

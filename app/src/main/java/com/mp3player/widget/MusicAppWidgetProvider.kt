@@ -127,25 +127,27 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
                     val progress = if (duration > 0) ((progressMs.toFloat() / duration) * 1000).toInt() else 0
                     remoteViews.setProgressBar(R.id.widget_progress_bar, 1000, progress, false)
 
-                    // Active playlist collage thumbnail slot (2x2 grid collage)
-                    val collageBmp = createPlaylistCollageBitmap(context, playlistSongs, recentSongs, song)
+                    // Active playlist collage thumbnail slot (pure 2x2 grid collage of playlist songs)
+                    val collageBmp = createPlaylistCollageBitmap(context, playlistSongs)
                     remoteViews.setImageViewBitmap(R.id.widget_recent_playlist_art, collageBmp)
 
-                    // Recently played thumbnails in bottom row (1:1 square cropped)
+                    // Upcoming / Top 6 songs thumbnails in bottom row (1:1 square cropped with 1-tap play intent)
                     val slotIds = intArrayOf(
                         R.id.widget_recent_1,
                         R.id.widget_recent_2,
                         R.id.widget_recent_3,
-                        R.id.widget_recent_4
+                        R.id.widget_recent_4,
+                        R.id.widget_recent_5,
+                        R.id.widget_recent_6
                     )
                     for (i in slotIds.indices) {
-                        val recentSong = recentSongs.getOrNull(i)
-                        if (recentSong != null && !recentSong.artworkPath.isNullOrBlank()) {
-                            val bmp = loadScaledBitmap(context, recentSong.artworkPath)
+                        val upcomingSong = recentSongs.getOrNull(i)
+                        if (upcomingSong != null && !upcomingSong.artworkPath.isNullOrBlank()) {
+                            val bmp = loadScaledBitmap(context, upcomingSong.artworkPath)
                             if (bmp != null && !bmp.isRecycled) {
                                 try {
                                     val squared = cropToSquare(bmp)
-                                    val miniScaled = Bitmap.createScaledBitmap(squared, 140, 140, true)
+                                    val miniScaled = Bitmap.createScaledBitmap(squared, 120, 120, true)
                                     remoteViews.setImageViewBitmap(slotIds[i], miniScaled)
                                 } catch (e: Exception) {
                                     remoteViews.setImageViewResource(slotIds[i], R.drawable.ic_music_note)
@@ -153,6 +155,13 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
                             } else {
                                 remoteViews.setImageViewResource(slotIds[i], R.drawable.ic_music_note)
                             }
+
+                            // 1-Tap Play Intent for upcoming/top song
+                            val playSongIntent = Intent(context, AudioService::class.java).apply {
+                                action = AudioService.ACTION_PLAY_SPECIFIC_SONG
+                                putExtra(AudioService.EXTRA_SONG_ID, upcomingSong.id)
+                            }
+                            remoteViews.setOnClickPendingIntent(slotIds[i], getServicePendingIntent(context, 100 + i, playSongIntent))
                         } else {
                             remoteViews.setImageViewResource(slotIds[i], R.drawable.ic_music_note)
                         }
@@ -199,13 +208,8 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
             return Bitmap.createBitmap(bitmap, x, y, size, size)
         }
 
-        private fun createPlaylistCollageBitmap(context: Context, playlistSongs: List<SongEntity>, recentSongs: List<SongEntity>, currentSong: SongEntity?): Bitmap {
-            val allSongs = mutableListOf<SongEntity>()
-            allSongs.addAll(playlistSongs)
-            currentSong?.let { allSongs.add(it) }
-            allSongs.addAll(recentSongs)
-            
-            val artworkPaths = allSongs.mapNotNull { it.artworkPath }.filter { it.isNotBlank() }.distinct().take(4)
+        private fun createPlaylistCollageBitmap(context: Context, playlistSongs: List<SongEntity>): Bitmap {
+            val artworkPaths = playlistSongs.mapNotNull { it.artworkPath }.filter { it.isNotBlank() }.distinct().take(4)
             val bitmaps = artworkPaths.mapNotNull { path ->
                 loadScaledBitmap(context, path)?.let { cropToSquare(it) }
             }
@@ -231,6 +235,7 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
             defaultBitmap.eraseColor(android.graphics.Color.DKGRAY)
             return defaultBitmap
         }
+
 
         private fun loadScaledBitmap(context: Context, path: String?): Bitmap? {
             if (path.isNullOrBlank()) return null
