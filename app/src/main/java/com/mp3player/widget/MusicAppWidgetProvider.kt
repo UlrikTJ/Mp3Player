@@ -93,7 +93,8 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
                         try {
                             val squared = cropToSquare(rawBitmap)
                             val scaled = Bitmap.createScaledBitmap(squared, 360, 360, true)
-                            remoteViews.setImageViewBitmap(R.id.widget_album_art, scaled)
+                            val rounded = getRoundedCornerBitmap(scaled, 32f)
+                            remoteViews.setImageViewBitmap(R.id.widget_album_art, rounded)
                             artLoaded = true
                         } catch (e: Exception) {
                             e.printStackTrace()
@@ -127,11 +128,11 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
                     val progress = if (duration > 0) ((progressMs.toFloat() / duration) * 1000).toInt() else 0
                     remoteViews.setProgressBar(R.id.widget_progress_bar, 1000, progress, false)
 
-                    // Active playlist collage thumbnail slot (pure 2x2 grid collage of playlist songs)
+                    // Active playlist collage thumbnail slot (pure 3x3 grid collage of playlist songs)
                     val collageBmp = createPlaylistCollageBitmap(context, playlistSongs)
                     remoteViews.setImageViewBitmap(R.id.widget_recent_playlist_art, collageBmp)
 
-                    // Upcoming / Top 6 songs thumbnails in bottom row (1:1 square cropped with 1-tap play intent)
+                    // Upcoming / Top 6 songs thumbnails in bottom row (1:1 square cropped with rounded corners and 1-tap play intent)
                     val slotIds = intArrayOf(
                         R.id.widget_recent_1,
                         R.id.widget_recent_2,
@@ -148,7 +149,8 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
                                 try {
                                     val squared = cropToSquare(bmp)
                                     val miniScaled = Bitmap.createScaledBitmap(squared, 120, 120, true)
-                                    remoteViews.setImageViewBitmap(slotIds[i], miniScaled)
+                                    val roundedMini = getRoundedCornerBitmap(miniScaled, 20f)
+                                    remoteViews.setImageViewBitmap(slotIds[i], roundedMini)
                                 } catch (e: Exception) {
                                     remoteViews.setImageViewResource(slotIds[i], R.drawable.ic_music_note)
                                 }
@@ -208,32 +210,58 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
             return Bitmap.createBitmap(bitmap, x, y, size, size)
         }
 
+        private fun getRoundedCornerBitmap(bitmap: Bitmap, cornerRadiusPx: Float = 24f): Bitmap {
+            val output = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
+            val canvas = android.graphics.Canvas(output)
+            val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+            val rect = android.graphics.Rect(0, 0, bitmap.width, bitmap.height)
+            val rectF = android.graphics.RectF(rect)
+            canvas.drawRoundRect(rectF, cornerRadiusPx, cornerRadiusPx, paint)
+            paint.xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC_IN)
+            canvas.drawBitmap(bitmap, rect, rect, paint)
+            return output
+        }
+
         private fun createPlaylistCollageBitmap(context: Context, playlistSongs: List<SongEntity>): Bitmap {
-            val artworkPaths = playlistSongs.mapNotNull { it.artworkPath }.filter { it.isNotBlank() }.distinct().take(4)
+            val artworkPaths = playlistSongs.mapNotNull { it.artworkPath }.filter { it.isNotBlank() }.distinct().take(9)
             val bitmaps = artworkPaths.mapNotNull { path ->
                 loadScaledBitmap(context, path)?.let { cropToSquare(it) }
             }
 
-            if (bitmaps.size >= 4) {
-                val collage = Bitmap.createBitmap(160, 160, Bitmap.Config.ARGB_8888)
+            val size = 180
+            if (bitmaps.size >= 5) {
+                // 3x3 Grid Collage (9 tiles of 60x60 each)
+                val collage = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
                 val canvas = android.graphics.Canvas(collage)
-                val mini1 = Bitmap.createScaledBitmap(bitmaps[0], 80, 80, true)
-                val mini2 = Bitmap.createScaledBitmap(bitmaps[1], 80, 80, true)
-                val mini3 = Bitmap.createScaledBitmap(bitmaps[2], 80, 80, true)
-                val mini4 = Bitmap.createScaledBitmap(bitmaps[3], 80, 80, true)
-                canvas.drawBitmap(mini1, 0f, 0f, null)
-                canvas.drawBitmap(mini2, 80f, 0f, null)
-                canvas.drawBitmap(mini3, 0f, 80f, null)
-                canvas.drawBitmap(mini4, 80f, 80f, null)
-                return collage
+                val tileSize = 60
+                for (i in 0 until minOf(9, bitmaps.size)) {
+                    val row = i / 3
+                    val col = i % 3
+                    val mini = Bitmap.createScaledBitmap(bitmaps[i], tileSize, tileSize, true)
+                    canvas.drawBitmap(mini, (col * tileSize).toFloat(), (row * tileSize).toFloat(), null)
+                }
+                return getRoundedCornerBitmap(collage, 24f)
+            } else if (bitmaps.size >= 4) {
+                // 2x2 Grid Collage (4 tiles of 90x90 each)
+                val collage = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+                val canvas = android.graphics.Canvas(collage)
+                val tileSize = 90
+                for (i in 0..3) {
+                    val row = i / 2
+                    val col = i % 2
+                    val mini = Bitmap.createScaledBitmap(bitmaps[i], tileSize, tileSize, true)
+                    canvas.drawBitmap(mini, (col * tileSize).toFloat(), (row * tileSize).toFloat(), null)
+                }
+                return getRoundedCornerBitmap(collage, 24f)
             } else if (bitmaps.isNotEmpty()) {
                 val square = cropToSquare(bitmaps[0])
-                return Bitmap.createScaledBitmap(square, 160, 160, true)
+                val scaled = Bitmap.createScaledBitmap(square, size, size, true)
+                return getRoundedCornerBitmap(scaled, 24f)
             }
 
-            val defaultBitmap = Bitmap.createBitmap(160, 160, Bitmap.Config.ARGB_8888)
+            val defaultBitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
             defaultBitmap.eraseColor(android.graphics.Color.DKGRAY)
-            return defaultBitmap
+            return getRoundedCornerBitmap(defaultBitmap, 24f)
         }
 
 

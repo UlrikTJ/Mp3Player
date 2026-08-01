@@ -599,11 +599,16 @@ fun HomeScreen(
                                             maxLines = 1
                                         )
                                     }
-                                    Icon(
-                                        imageVector = Icons.Default.PlayArrow,
-                                        contentDescription = "Open Playlist",
-                                        tint = MaterialTheme.colorScheme.primary
-                                    )
+                                    IconButton(
+                                        onClick = { viewModel.playPlaylist(playlist.id, shuffle = false) }
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.PlayArrow,
+                                            contentDescription = "Play Playlist",
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+
                                 }
                             }
                         }
@@ -1222,6 +1227,16 @@ fun SongRow(
                         expanded = menuExpanded,
                         onDismissRequest = { menuExpanded = false }
                     ) {
+                        val activePId by viewModel.activePlaylistId.collectAsState()
+                        if (activePId != null) {
+                            DropdownMenuItem(
+                                text = { Text("Remove from Playlist", color = Color(0xFFE53935)) },
+                                onClick = {
+                                    menuExpanded = false
+                                    viewModel.removeSongFromPlaylist(activePId!!, song.id)
+                                }
+                            )
+                        }
                         DropdownMenuItem(
                             text = { Text("Add to Playlist") },
                             onClick = {
@@ -1229,6 +1244,7 @@ fun SongRow(
                                 showPlaylistPicker = true
                             }
                         )
+
                         DropdownMenuItem(
                             text = { Text("Delete from App (Ignore file)") },
                             onClick = {
@@ -1508,20 +1524,15 @@ fun PlaylistCollageCover(
         if (songsWithArt.isEmpty()) return@remember emptyList<String>()
         
         val statsMap = stats.associate { it.songId to it.playCount }
-        
-        // Sort by play count descending, with unplayed fallback
         val sortedByViews = songsWithArt.sortedWith(
             compareByDescending<SongEntity> { statsMap[it.id] ?: 0 }
                 .thenBy { it.title }
         )
         
-        // Select top 9 songs (or cycle if total songs with art < 9)
         val top9 = sortedByViews.take(9)
-        val nineArtworks = List(9) { index -> top9[index % top9.size].artworkPath!! }
-        
-        // Randomize placement in the 3x3 grid
-        nineArtworks.shuffled()
+        List(9) { index -> top9[index % top9.size].artworkPath!! }
     }
+
 
     Box(
         modifier = modifier
@@ -2124,15 +2135,33 @@ fun PlaylistDetailView(
                                         modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
                                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                                     ) {
+                                        val activePlaylistIdState by viewModel.activePlaylistId.collectAsState()
+                                        val isThisPlaylistActive = activePlaylistIdState == playlist.id
                                         Button(
-                                            onClick = { viewModel.playPlaylist(playlist.id, shuffle = false) },
+                                            onClick = {
+                                                val manager = playerManager
+                                                if (isThisPlaylistActive && manager != null) {
+                                                    if (isPlaying) manager.pause() else manager.resume()
+                                                } else {
+                                                    viewModel.playPlaylist(playlist.id, shuffle = false)
+                                                }
+                                            },
                                             modifier = Modifier.weight(1f),
                                             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                                         ) {
-                                            Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.Black)
+                                            Icon(
+                                                imageVector = if (isThisPlaylistActive && isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                                contentDescription = "Play/Pause",
+                                                tint = Color.Black
+                                            )
                                             Spacer(modifier = Modifier.width(8.dp))
-                                            Text("Play", color = Color.Black, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                                            Text(
+                                                text = if (isThisPlaylistActive && isPlaying) "Pause" else if (isThisPlaylistActive) "Resume" else "Play",
+                                                color = Color.Black,
+                                                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                                            )
                                         }
+
                                         Button(
                                             onClick = { viewModel.playPlaylist(playlist.id, shuffle = true) },
                                             modifier = Modifier.weight(1f),

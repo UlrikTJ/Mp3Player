@@ -171,14 +171,19 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
-    val upcomingOrTopSongs: StateFlow<List<SongEntity>> = combine(_currentQueue, _playerManager, allSongs, songStats) { queue, pManager, songs, stats ->
-        val playingSong = pManager?.currentPlayingSong?.value
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val currentPlayingSong: StateFlow<SongEntity?> = _playerManager
+        .flatMapLatest { pm -> pm?.currentPlayingSong ?: flowOf(null) }
+        .stateIn(viewModelScope, SharingStarted.Lazily, null)
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val upcomingOrTopSongs: StateFlow<List<SongEntity>> = combine(_currentQueue, currentPlayingSong, allSongs, songStats) { queue, playingSong, songs, stats ->
         if (playingSong != null && queue.isNotEmpty()) {
             val currentIdx = queue.indexOfFirst { it.id == playingSong.id }
             if (currentIdx >= 0 && currentIdx + 1 < queue.size) {
                 queue.subList(currentIdx + 1, minOf(currentIdx + 7, queue.size))
             } else {
-                queue.take(6)
+                queue.filter { it.id != playingSong.id }.take(6)
             }
         } else {
             val sortedByPlays = stats.sortedByDescending { it.playCount }.mapNotNull { stat ->
