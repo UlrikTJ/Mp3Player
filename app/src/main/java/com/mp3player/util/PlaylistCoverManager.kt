@@ -4,12 +4,13 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import android.graphics.Rect
 import android.graphics.RectF
+import android.media.MediaMetadataRetriever
+import android.net.Uri
 import com.mp3player.data.entity.SongEntity
 import java.io.File
 import java.io.FileOutputStream
@@ -20,6 +21,17 @@ object PlaylistCoverManager {
         val dir = File(context.filesDir, "playlist_covers")
         if (!dir.exists()) dir.mkdirs()
         return File(dir, "playlist_${playlistId}_cover.png")
+    }
+
+    fun clearStaleCovers(context: Context) {
+        try {
+            val dir = File(context.filesDir, "playlist_covers")
+            if (dir.exists()) {
+                dir.listFiles()?.forEach { it.delete() }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     fun getOrCreateCover(context: Context, playlistId: Int, songs: List<SongEntity>): File? {
@@ -39,9 +51,16 @@ object PlaylistCoverManager {
         }
 
         val artworkPaths = songsWithArt.mapNotNull { it.artworkPath }.filter { it.isNotBlank() }.distinct().take(9)
-        if (artworkPaths.isEmpty()) return null
+        val loadedBitmaps = artworkPaths.mapNotNull { path ->
+            loadScaledBitmap(context, path)?.let { cropToSquare(it) }
+        }
 
-        val top9Paths = List(9) { index -> artworkPaths[index % artworkPaths.size] }
+        if (loadedBitmaps.isEmpty()) {
+            if (targetFile.exists()) targetFile.delete()
+            return null
+        }
+
+        val top9Bitmaps = List(9) { index -> loadedBitmaps[index % loadedBitmaps.size] }
         val size = 360
         val tileSize = 120
 
@@ -51,10 +70,7 @@ object PlaylistCoverManager {
         for (i in 0 until 9) {
             val row = i / 3
             val col = i % 3
-            val path = top9Paths[i]
-            val bmp = loadScaledBitmap(context, path)
-            val squared = if (bmp != null) cropToSquare(bmp) else createPlaceholder(tileSize)
-            val mini = Bitmap.createScaledBitmap(squared, tileSize, tileSize, true)
+            val mini = Bitmap.createScaledBitmap(top9Bitmaps[i], tileSize, tileSize, true)
             canvas.drawBitmap(mini, (col * tileSize).toFloat(), (row * tileSize).toFloat(), null)
         }
 
@@ -71,47 +87,54 @@ object PlaylistCoverManager {
         }
     }
 
-    private fun loadScaledBitmap(context: Context, path: String): Bitmap? {
+    fun loadScaledBitmap(context: Context, path: String?): Bitmap? {
+        if (path.isNullOrBlank()) return null
         return try {
-            val options = BitmapFactory.Options().apply {
-                inJustDecodeBounds = true
-            }
-            if (path.startsWith("content://")) {
-                context.contentResolver.openInputStream(android.net.Uri.parse(path))?.use {
-                    BitmapFactory.decodeStream(it, null, options)
-                }
+            val uri = if (path.startsWith("content://") || path.startsWith("file://")) {
+                Uri.parse(path)
             } else {
-                BitmapFactory.decodeFile(path, options)
+                Uri.fromFile(File(path))
             }
 
-            options.inSampleSize = calculateInSampleSize(options, 180, 180)
-            options.inJustDecodeBounds = false
-
-            if (path.startsWith("content://")) {
-                context.contentResolver.openInputStream(android.net.Uri.parse(path))?.use {
-                    BitmapFactory.decodeStream(it, null, options)
+            // Try 1: ContentResolver openInputStream
+            val streamBitmap = try {
+                context.contentResolver.openInputStream(uri)?.use { stream ->
+                    val options = BitmapFactory.Options().apply {
+                        inSampleSize = 2
+                    }
+                    BitmapFactory.decodeStream(stream, null, options)
                 }
-            } else {
-                BitmapFactory.decodeFile(path, options)
-            }
+            } catch (e: Exception) { null }
+
+            if (streamBitmap != null && !streamBitmap.isRecycled) return streamBitmap
+
+            // Try 2: Direct file decode
+            val fileBmp = try {
+                if (!path.startsWith("content://")) {
+                    val options = BitmapFactory.Options().apply {
+                        inSampleSize = 2
+                    }
+                    BitmapFactory.decodeFile(path, options)
+                } else null
+            } catch (e: Exception) { null }
+
+            if (fileBmp != null && !fileBmp.isRecycled) return fileBmp
+
+            // Try 3: MediaMetadataRetriever embed artwork fallback
+            try {
+                val retriever = MediaMetadataRetriever()
+                retriever.setDataSource(context, uri)
+                val artBytes = retriever.embeddedPicture
+                retriever.release()
+                if (artBytes != null) {
+                    return BitmapFactory.decodeByteArray(artBytes, 0, artBytes.size)
+                }
+            } catch (e: Exception) { }
+
+            null
         } catch (e: Exception) {
-            e.printStackTrace()
             null
         }
-
-    }
-
-    private fun calculateInSampleSize(options: BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
-        val (height: Int, width: Int) = options.run { outHeight to outWidth }
-        var inSampleSize = 1
-        if (height > reqHeight || width > reqWidth) {
-            val halfHeight: Int = height / 2
-            val halfWidth: Int = width / 2
-            while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
-                inSampleSize *= 2
-            }
-        }
-        return inSampleSize
     }
 
     private fun cropToSquare(bitmap: Bitmap): Bitmap {
@@ -119,12 +142,6 @@ object PlaylistCoverManager {
         val x = (bitmap.width - size) / 2
         val y = (bitmap.height - size) / 2
         return Bitmap.createBitmap(bitmap, x, y, size, size)
-    }
-
-    private fun createPlaceholder(size: Int): Bitmap {
-        val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-        bmp.eraseColor(Color.DKGRAY)
-        return bmp
     }
 
     private fun getRoundedCornerBitmap(bitmap: Bitmap, cornerRadiusPx: Float): Bitmap {

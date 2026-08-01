@@ -226,6 +226,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         statsTracker.onSessionStarted()
+        com.mp3player.util.PlaylistCoverManager.clearStaleCovers(getApplication())
 
         // Automatically push widget updates whenever upcoming songs, active playlist, or current track update
         viewModelScope.launch {
@@ -233,6 +234,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 updateWidgets()
             }
         }
+
 
         // Periodic check for missing artworks
         viewModelScope.launch {

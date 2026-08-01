@@ -1529,6 +1529,15 @@ fun PlaylistCollageCover(
         com.mp3player.util.PlaylistCoverManager.getOrCreateCover(context, playlistId, songs)
     }
 
+    val gridArtworks = remember(songs) {
+        val songsWithArt = songs.filter { !it.artworkPath.isNullOrBlank() }
+        if (songsWithArt.isEmpty()) emptyList<String>()
+        else {
+            val top9 = songsWithArt.take(9)
+            List(9) { index -> top9[index % top9.size].artworkPath!! }
+        }
+    }
+
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
@@ -1539,23 +1548,42 @@ fun PlaylistCollageCover(
             ),
         contentAlignment = Alignment.Center
     ) {
-        if (coverFile == null || !coverFile.exists()) {
-            Icon(
-                Icons.AutoMirrored.Filled.PlaylistPlay,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(36.dp)
-            )
-        } else {
+        if (coverFile != null && coverFile.exists() && coverFile.length() > 0) {
             AsyncImage(
                 model = coverFile,
                 contentDescription = null,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop
             )
+        } else if (gridArtworks.isNotEmpty()) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                for (row in 0..2) {
+                    Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                        for (col in 0..2) {
+                            val artPath = gridArtworks[row * 3 + col]
+                            AsyncImage(
+                                model = artPath,
+                                contentDescription = null,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxHeight(),
+                                contentScale = ContentScale.Crop
+                            )
+                        }
+                    }
+                }
+            }
+        } else {
+            Icon(
+                Icons.AutoMirrored.Filled.PlaylistPlay,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(36.dp)
+            )
         }
     }
 }
+
 
 
 @Composable
