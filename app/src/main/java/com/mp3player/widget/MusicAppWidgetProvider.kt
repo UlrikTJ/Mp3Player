@@ -123,25 +123,33 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
                 // High-Quality Thumbnail Artwork Loading (Cropped to exact 1:1 square with rounded corners)
                 val artPath = song?.artworkPath
                 var artLoaded = false
-                if (artPath != null && artPath.isNotBlank()) {
-                    val rawBitmap = artworkBitmap ?: loadScaledBitmap(context, artPath)
-                    if (rawBitmap != null && !rawBitmap.isRecycled) {
-                        try {
-                            val squared = cropToSquare(rawBitmap)
-                            val scaled = Bitmap.createScaledBitmap(squared, 360, 360, true)
-                            val rounded = getRoundedCornerBitmap(scaled, 32f)
-                            remoteViews.setImageViewBitmap(R.id.widget_album_art, rounded)
-                            artLoaded = true
-                        } catch (e: Exception) {
-                            e.printStackTrace()
+                if (song != null) {
+                    if (artPath != null && artPath.isNotBlank()) {
+                        val rawBitmap = artworkBitmap ?: loadScaledBitmap(context, artPath)
+                        if (rawBitmap != null && !rawBitmap.isRecycled) {
+                            try {
+                                val squared = cropToSquare(rawBitmap)
+                                val scaled = Bitmap.createScaledBitmap(squared, 360, 360, true)
+                                val rounded = getRoundedCornerBitmap(scaled, 32f)
+                                remoteViews.setImageViewBitmap(R.id.widget_album_art, rounded)
+                                artLoaded = true
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
                         }
                     }
-                }
-                if (!artLoaded) {
-                    // Fallback when no song artwork or idle: Use the playlist's 3x3 collage bitmap
+                    if (!artLoaded) {
+                        // Song playing but artwork missing or loading: show consistent 1:1 rounded placeholder (never flash 3x3 collage)
+                        val defaultBitmap = Bitmap.createBitmap(360, 360, Bitmap.Config.ARGB_8888)
+                        defaultBitmap.eraseColor(android.graphics.Color.DKGRAY)
+                        remoteViews.setImageViewBitmap(R.id.widget_album_art, getRoundedCornerBitmap(defaultBitmap, 32f))
+                    }
+                } else {
+                    // Idle state (no active song): Use the playlist's 3x3 collage bitmap
                     val collageBmp = createPlaylistCollageBitmap(context, playlistSongs, recentSongs)
                     remoteViews.setImageViewBitmap(R.id.widget_album_art, collageBmp)
                 }
+
 
 
                 // Shuffle & Repeat active vector icons & intents for 4x2 widget
