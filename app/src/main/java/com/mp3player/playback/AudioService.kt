@@ -43,6 +43,43 @@ class AudioService : Service() {
     private val CHANNEL_ID = "mp3player_playback_channel"
 
     private var currentArtworkBitmap: Bitmap? = null
+    private var audioManager: AudioManager? = null
+
+    private val audioFocusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
+        when (focusChange) {
+            AudioManager.AUDIOFOCUS_LOSS, AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                if (playerManager.isPlaying.value) {
+                    playerManager.pause()
+                    playerManager.currentPlayingSong.value?.let { song ->
+                        updateNotification(song, false)
+                        updateWidgetFromService(song, false, playerManager.playbackProgress.value)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun requestAudioFocus(): Boolean {
+        if (audioManager == null) return false
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val focusRequest = android.media.AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                .setAudioAttributes(android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build())
+                .setAcceptsDelayedFocusGain(true)
+                .setOnAudioFocusChangeListener(audioFocusChangeListener)
+                .build()
+            audioManager?.requestAudioFocus(focusRequest) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        } else {
+            @Suppress("DEPRECATION")
+            audioManager?.requestAudioFocus(
+                audioFocusChangeListener,
+                AudioManager.STREAM_MUSIC,
+                AudioManager.AUDIOFOCUS_GAIN
+            ) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        }
+    }
 
     var onTrackEndedListener: (() -> Unit)? = null
     var onTrackStartedListener: ((SongEntity) -> Unit)? = null
@@ -108,6 +145,7 @@ class AudioService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
         // Immediate foreground start satisfies Android's 5-second requirement 100% of the time
         val initialNotification = NotificationCompat.Builder(this, CHANNEL_ID)
@@ -131,10 +169,12 @@ class AudioService : Service() {
             // MediaSession Callback for earbud/headset/Bluetooth controls and lock screen
             setCallback(object : MediaSessionCompat.Callback() {
                 override fun onPlay() {
-                    playerManager.resume()
-                    playerManager.currentPlayingSong.value?.let { song ->
-                        updateNotification(song, true)
-                        updateWidgetFromService(song, true, playerManager.playbackProgress.value)
+                    if (requestAudioFocus()) {
+                        playerManager.resume()
+                        playerManager.currentPlayingSong.value?.let { song ->
+                            updateNotification(song, true)
+                            updateWidgetFromService(song, true, playerManager.playbackProgress.value)
+                        }
                     }
                 }
 
@@ -189,7 +229,7 @@ class AudioService : Service() {
         try {
             val filter = IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                registerReceiver(noisyReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+                registerReceiver(noisyReceiver, filter, Context.RECEIVER_EXPORTED)
             } else {
                 registerReceiver(noisyReceiver, filter)
             }
@@ -200,6 +240,7 @@ class AudioService : Service() {
 
         CoroutineScope(Dispatchers.Main).launch {
             playerManager.isPlaying.collect { isPlaying ->
+                if (isPlaying) requestAudioFocus()
                 playerManager.currentPlayingSong.value?.let { song ->
                     updateNotification(song, isPlaying)
                     updateWidgetFromService(song, isPlaying, playerManager.playbackProgress.value)
@@ -303,42 +344,124 @@ class AudioService : Service() {
     }
 
     private fun updateNotification(song: SongEntity, isPlaying: Boolean) {
-        CoroutineScope(Dispatchers.IO).launch {
-            val notificationIntent = Intent(this@AudioService, MainActivity::class.java)
-            val pendingIntent = PendingIntent.getActivity(
-                this@AudioService, 0, notificationIntent,
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        val notificationIntent = Intent(this@AudioService, MainActivity::class.java)
+        val pendingIntent = PendingIntent.getActivity(
+            this@AudioService, 0, notificationIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val prevPendingIntent = PendingIntent.getService(
+            this@AudioService, 10,
+            Intent(this@AudioService, AudioService::class.java).apply { action = ACTION_SKIP_PREVIOUS },
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val playPausePendingIntent = PendingIntent.getService(
+            this@AudioService, 11,
+            Intent(this@AudioService, AudioService::class.java).apply { action = ACTION_PLAY_PAUSE },
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val nextPendingIntent = PendingIntent.getService(
+            this@AudioService, 12,
+            Intent(this@AudioService, AudioService::class.java).apply { action = ACTION_SKIP_NEXT },
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val shufflePendingIntent = PendingIntent.getService(
+            this@AudioService, 13,
+            Intent(this@AudioService, AudioService::class.java).apply { action = ACTION_TOGGLE_SHUFFLE },
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val playPauseIcon = if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play
+        val playPauseText = if (isPlaying) "Pause" else "Play"
+
+        // Update MediaSession Metadata immediately
+        val metadataBuilder = MediaMetadataCompat.Builder()
+            .putString(MediaMetadataCompat.METADATA_KEY_TITLE, song.title)
+            .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, song.artist)
+            .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, song.album)
+            .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, song.durationMs)
+
+        if (currentArtworkBitmap != null) {
+            metadataBuilder.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, currentArtworkBitmap)
+            metadataBuilder.putBitmap(MediaMetadataCompat.METADATA_KEY_ART, currentArtworkBitmap)
+        }
+        mediaSession.setMetadata(metadataBuilder.build())
+
+        // Update PlaybackState
+        val stateBuilder = PlaybackStateCompat.Builder()
+            .setActions(
+                PlaybackStateCompat.ACTION_PLAY or
+                PlaybackStateCompat.ACTION_PAUSE or
+                PlaybackStateCompat.ACTION_PLAY_PAUSE or
+                PlaybackStateCompat.ACTION_SKIP_TO_NEXT or
+                PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or
+                PlaybackStateCompat.ACTION_SEEK_TO or
+                PlaybackStateCompat.ACTION_STOP
+            )
+            .setState(
+                if (isPlaying) PlaybackStateCompat.STATE_PLAYING else PlaybackStateCompat.STATE_PAUSED,
+                playerManager.playbackProgress.value,
+                if (isPlaying) 1.0f else 0.0f,
+                SystemClock.elapsedRealtime()
+            )
+        mediaSession.setPlaybackState(stateBuilder.build())
+
+        val builder = NotificationCompat.Builder(this@AudioService, CHANNEL_ID)
+            .setContentTitle(song.title)
+            .setContentText(song.artist)
+            .setSmallIcon(R.drawable.ic_music_note)
+            .setContentIntent(pendingIntent)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setOngoing(isPlaying)
+            .addAction(android.R.drawable.ic_menu_rotate, "Shuffle", shufflePendingIntent)
+            .addAction(android.R.drawable.ic_media_previous, "Previous", prevPendingIntent)
+            .addAction(playPauseIcon, playPauseText, playPausePendingIntent)
+            .addAction(android.R.drawable.ic_media_next, "Next", nextPendingIntent)
+            .setStyle(
+                androidx.media.app.NotificationCompat.MediaStyle()
+                    .setMediaSession(mediaSession.sessionToken)
+                    .setShowActionsInCompactView(1, 2, 3)
             )
 
-            val prevPendingIntent = PendingIntent.getService(
-                this@AudioService, 10,
-                Intent(this@AudioService, AudioService::class.java).apply { action = ACTION_SKIP_PREVIOUS },
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-            )
+        if (currentArtworkBitmap != null) {
+            builder.setLargeIcon(currentArtworkBitmap)
+        }
 
-            val playPausePendingIntent = PendingIntent.getService(
-                this@AudioService, 11,
-                Intent(this@AudioService, AudioService::class.java).apply { action = ACTION_PLAY_PAUSE },
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-            )
+        val notification = builder.build()
+        updateWidgetFromService(song, isPlaying, playerManager.playbackProgress.value)
 
-            val nextPendingIntent = PendingIntent.getService(
-                this@AudioService, 12,
-                Intent(this@AudioService, AudioService::class.java).apply { action = ACTION_SKIP_NEXT },
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-            )
+        try {
+            if (isPlaying) {
+                val serviceIntent = Intent(this@AudioService, AudioService::class.java)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    startForegroundService(serviceIntent)
+                } else {
+                    startService(serviceIntent)
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+                } else {
+                    startForeground(NOTIFICATION_ID, notification)
+                }
+            } else {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    stopForeground(STOP_FOREGROUND_DETACH)
+                } else {
+                    @Suppress("DEPRECATION")
+                    stopForeground(false)
+                }
+                val manager = getSystemService(NotificationManager::class.java)
+                manager?.notify(NOTIFICATION_ID, notification)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
 
-            val shufflePendingIntent = PendingIntent.getService(
-                this@AudioService, 13,
-                Intent(this@AudioService, AudioService::class.java).apply { action = ACTION_TOGGLE_SHUFFLE },
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-            )
-
-            val playPauseIcon = if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play
-            val playPauseText = if (isPlaying) "Pause" else "Play"
-
-            var largeIconBitmap: Bitmap? = null
-            if (!song.artworkPath.isNullOrEmpty()) {
+        if (!song.artworkPath.isNullOrEmpty() && currentArtworkBitmap == null) {
+            CoroutineScope(Dispatchers.IO).launch {
                 try {
                     val loader = ImageLoader(this@AudioService)
                     val highResArtPath = if (song.artworkPath.contains("i.ytimg.com") || song.artworkPath.contains("ytimg.com")) {
@@ -380,102 +503,18 @@ class AudioService : Service() {
                     }
 
                     val original = (drawable as? BitmapDrawable)?.bitmap
-                    
                     if (original != null && original.width > 0 && original.height > 0) {
                         val targetHeight = (original.height * 0.70).toInt().coerceAtLeast(1)
                         val topOffset = (original.height - targetHeight) / 2
-                        largeIconBitmap = Bitmap.createBitmap(original, 0, topOffset, original.width, targetHeight)
-                    }
-                    currentArtworkBitmap = largeIconBitmap
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
-            } else {
-                currentArtworkBitmap = null
-            }
-
-            // Update MediaSession Metadata so System UI Media Controls use full-res HD artwork
-            val metadataBuilder = MediaMetadataCompat.Builder()
-                .putString(MediaMetadataCompat.METADATA_KEY_TITLE, song.title)
-                .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, song.artist)
-                .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, song.album)
-                .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, song.durationMs)
-
-            if (largeIconBitmap != null) {
-                metadataBuilder.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, largeIconBitmap)
-                metadataBuilder.putBitmap(MediaMetadataCompat.METADATA_KEY_ART, largeIconBitmap)
-            }
-            mediaSession.setMetadata(metadataBuilder.build())
-
-            // Update PlaybackState for lock screen controls and earbud button routing
-            val stateBuilder = PlaybackStateCompat.Builder()
-                .setActions(
-                    PlaybackStateCompat.ACTION_PLAY or
-                    PlaybackStateCompat.ACTION_PAUSE or
-                    PlaybackStateCompat.ACTION_PLAY_PAUSE or
-                    PlaybackStateCompat.ACTION_SKIP_TO_NEXT or
-                    PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or
-                    PlaybackStateCompat.ACTION_SEEK_TO or
-                    PlaybackStateCompat.ACTION_STOP
-                )
-                .setState(
-                    if (isPlaying) PlaybackStateCompat.STATE_PLAYING else PlaybackStateCompat.STATE_PAUSED,
-                    playerManager.playbackProgress.value,
-                    if (isPlaying) 1.0f else 0.0f,
-                    SystemClock.elapsedRealtime()
-                )
-            mediaSession.setPlaybackState(stateBuilder.build())
-
-            val builder = NotificationCompat.Builder(this@AudioService, CHANNEL_ID)
-                .setContentTitle(song.title)
-                .setContentText(song.artist)
-                .setSmallIcon(R.drawable.ic_music_note)
-                .setContentIntent(pendingIntent)
-                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-                .setOngoing(isPlaying)
-                .addAction(android.R.drawable.ic_menu_rotate, "Shuffle", shufflePendingIntent)
-                .addAction(android.R.drawable.ic_media_previous, "Previous", prevPendingIntent)
-                .addAction(playPauseIcon, playPauseText, playPausePendingIntent)
-                .addAction(android.R.drawable.ic_media_next, "Next", nextPendingIntent)
-                .setStyle(
-                    androidx.media.app.NotificationCompat.MediaStyle()
-                        .setMediaSession(mediaSession.sessionToken)
-                        .setShowActionsInCompactView(1, 2, 3)
-                )
-
-            if (largeIconBitmap != null) {
-                builder.setLargeIcon(largeIconBitmap)
-            }
-
-            val notification = builder.build()
-
-            withContext(Dispatchers.Main) {
-                updateWidgetFromService(song, isPlaying, playerManager.playbackProgress.value)
-                try {
-                    if (isPlaying) {
-                        val serviceIntent = Intent(this@AudioService, AudioService::class.java)
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                            startForegroundService(serviceIntent)
-                        } else {
-                            startService(serviceIntent)
+                        val largeIconBitmap = Bitmap.createBitmap(original, 0, topOffset, original.width, targetHeight)
+                        currentArtworkBitmap = largeIconBitmap
+                        
+                        // Recurse on main thread to update notification with new artwork
+                        withContext(Dispatchers.Main) {
+                            updateNotification(song, isPlaying)
                         }
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
-                        } else {
-                            startForeground(NOTIFICATION_ID, notification)
-                        }
-                    } else {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                            stopForeground(STOP_FOREGROUND_DETACH)
-                        } else {
-                            @Suppress("DEPRECATION")
-                            stopForeground(false)
-                        }
-                        val manager = getSystemService(NotificationManager::class.java)
-                        manager?.notify(NOTIFICATION_ID, notification)
                     }
                 } catch (e: Exception) {
-                    // Handle ForegroundServiceStartNotAllowedException on Android 12+
                     e.printStackTrace()
                 }
             }
@@ -492,6 +531,23 @@ class AudioService : Service() {
             }
             noisyReceiverRegistered = false
         }
+        onTrackEndedListener = null
+        onTrackStartedListener = null
+        onCrossfadeCompletedListener = null
+        onPrepareNextSongListener = null
+        onSkipPreviousListener = null
+        onToggleShuffleListener = null
+        onToggleRepeatListener = null
+        onRecentlyPlayedListener = null
+        onActivePlaylistSongsListener = null
+        onUpcomingOrTopSongsListener = null
+        onPlaySpecificSongListener = null
+        onPlayFirstPlaylistListener = null
+        onActivePlaylistIdListener = null
+        onPlaylistStatsListener = null
+
+        EqualizerManager.release()
+        
         mediaSession.isActive = false
         mediaSession.release()
         playerManager.release()

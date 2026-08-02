@@ -130,10 +130,22 @@ abstract class MusicDao {
             s.title,
             s.artist,
             s.baseWeight,
-            (SELECT COUNT(*) FROM playback_events pe WHERE pe.songId = s.id AND pe.outcome = 'COMPLETED') as playCount,
-            (SELECT COUNT(*) FROM playback_events pe WHERE pe.songId = s.id AND pe.outcome IN ('SKIPPED', 'CHAIN_SKIPPED')) as skipCount,
-            (SELECT COUNT(*) FROM chain_skip_events cse WHERE cse.keeperSongId = s.id) as keeperCount
+            COALESCE(pe_stats.playCount, 0) as playCount,
+            COALESCE(pe_stats.skipCount, 0) as skipCount,
+            COALESCE(cse_stats.keeperCount, 0) as keeperCount
         FROM songs s
+        LEFT JOIN (
+            SELECT songId,
+                   SUM(CASE WHEN outcome = 'COMPLETED' THEN 1 ELSE 0 END) as playCount,
+                   SUM(CASE WHEN outcome IN ('SKIPPED', 'CHAIN_SKIPPED') THEN 1 ELSE 0 END) as skipCount
+            FROM playback_events
+            GROUP BY songId
+        ) pe_stats ON s.id = pe_stats.songId
+        LEFT JOIN (
+            SELECT keeperSongId, COUNT(*) as keeperCount
+            FROM chain_skip_events
+            GROUP BY keeperSongId
+        ) cse_stats ON s.id = cse_stats.keeperSongId
     """)
     abstract fun getSongStatsFlow(): Flow<List<SongStats>>
 
@@ -143,11 +155,25 @@ abstract class MusicDao {
             s.title,
             s.artist,
             s.baseWeight,
-            (SELECT COUNT(*) FROM playback_events pe WHERE pe.songId = s.id AND pe.playlistId = :playlistId AND pe.outcome = 'COMPLETED') as playCount,
-            (SELECT COUNT(*) FROM playback_events pe WHERE pe.songId = s.id AND pe.playlistId = :playlistId AND pe.outcome IN ('SKIPPED', 'CHAIN_SKIPPED')) as skipCount,
-            (SELECT COUNT(*) FROM chain_skip_events cse WHERE cse.keeperSongId = s.id AND cse.sessionId IN (SELECT DISTINCT pe2.sessionId FROM playback_events pe2 WHERE pe2.playlistId = :playlistId)) as keeperCount
+            COALESCE(pe_stats.playCount, 0) as playCount,
+            COALESCE(pe_stats.skipCount, 0) as skipCount,
+            COALESCE(cse_stats.keeperCount, 0) as keeperCount
         FROM songs s
         INNER JOIN playlist_songs ps ON s.id = ps.songId
+        LEFT JOIN (
+            SELECT songId,
+                   SUM(CASE WHEN outcome = 'COMPLETED' THEN 1 ELSE 0 END) as playCount,
+                   SUM(CASE WHEN outcome IN ('SKIPPED', 'CHAIN_SKIPPED') THEN 1 ELSE 0 END) as skipCount
+            FROM playback_events
+            WHERE playlistId = :playlistId
+            GROUP BY songId
+        ) pe_stats ON s.id = pe_stats.songId
+        LEFT JOIN (
+            SELECT cse.keeperSongId, COUNT(*) as keeperCount
+            FROM chain_skip_events cse
+            WHERE cse.sessionId IN (SELECT DISTINCT pe2.sessionId FROM playback_events pe2 WHERE pe2.playlistId = :playlistId)
+            GROUP BY cse.keeperSongId
+        ) cse_stats ON s.id = cse_stats.keeperSongId
         WHERE ps.playlistId = :playlistId
     """)
     abstract fun getPlaylistSongStatsFlow(playlistId: Int): Flow<List<SongStats>>

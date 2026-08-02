@@ -1107,7 +1107,7 @@ fun LibraryScreen(viewModel: MusicViewModel) {
         } else {
             if (viewMode == "ALL") {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    itemsIndexed(filteredSongs) { index, song ->
+                    itemsIndexed(filteredSongs, key = { _, song -> song.id }) { index, song ->
                         SongRow(
                             song = song, 
                             viewModel = viewModel,
@@ -1124,7 +1124,7 @@ fun LibraryScreen(viewModel: MusicViewModel) {
             } else {
                 if (expandedFolder == null) {
                     LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(folders.keys.toList()) { folderName ->
+                        items(folders.keys.toList(), key = { it }) { folderName ->
                             Card(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -1158,7 +1158,7 @@ fun LibraryScreen(viewModel: MusicViewModel) {
                     Spacer(modifier = Modifier.height(8.dp))
                     LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         val folderSongs = folders[expandedFolder] ?: emptyList()
-                        itemsIndexed(folderSongs) { index, song ->
+                        itemsIndexed(folderSongs, key = { _, song -> song.id }) { index, song ->
                             SongRow(
                                 song = song, 
                                 viewModel = viewModel,
@@ -1414,7 +1414,7 @@ fun SearchScreen(viewModel: MusicViewModel) {
             }
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(results) { track ->
+                items(results, key = { it.id ?: it.hashCode() }) { track ->
                     var showDetailDialog by remember { mutableStateOf(false) }
                     Card(
                         modifier = Modifier
@@ -1535,8 +1535,18 @@ fun PlaylistCollageCover(
     playlistId: Int = 0
 ) {
     val context = LocalContext.current
-    val coverFile = remember(songs, playlistId, stats) {
-        com.mp3player.util.PlaylistCoverManager.getOrCreateCover(context, playlistId, songs, stats)
+    var coverFile by remember { mutableStateOf<java.io.File?>(null) }
+    
+    LaunchedEffect(songs, playlistId, stats) {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val file = com.mp3player.util.PlaylistCoverManager.getOrCreateCover(context, playlistId, songs, stats)
+            // check length off main thread
+            if (file != null && file.exists() && file.length() > 0) {
+                coverFile = file
+            } else {
+                coverFile = null
+            }
+        }
     }
 
     val gridArtworks = remember(songs, stats) {
@@ -1564,7 +1574,7 @@ fun PlaylistCollageCover(
             ),
         contentAlignment = Alignment.Center
     ) {
-        if (coverFile != null && coverFile.exists() && coverFile.length() > 0) {
+        if (coverFile != null) {
             AsyncImage(
                 model = coverFile,
                 contentDescription = null,
@@ -1741,7 +1751,7 @@ fun PlaylistsScreen(viewModel: MusicViewModel) {
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    items(playlists) { playlist ->
+                    items(playlists, key = { it.id }) { playlist ->
                         Card(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -2082,17 +2092,24 @@ fun PlaylistDetailView(
                 var currentTargetIndex by remember { mutableStateOf<Int?>(null) }
                 val currentTargetIndexRef = rememberUpdatedState(currentTargetIndex)
 
-                // Recalculate target index reactively whenever drag position or scroll changes
-                LaunchedEffect(currentDraggedIndex, targetScreenY, playlistListState.firstVisibleItemIndex, playlistListState.firstVisibleItemScrollOffset) {
-                    currentTargetIndex = if (currentDraggedIndex == null) null
-                    else {
+                // Recalculate target index reactively without recomposition loops
+                LaunchedEffect(currentDraggedIndex) {
+                    if (currentDraggedIndex == null) {
+                        currentTargetIndex = null
+                        return@LaunchedEffect
+                    }
+                    androidx.compose.runtime.snapshotFlow {
+                        // Observe scroll state and drag position
+                        playlistListState.firstVisibleItemIndex
+                        playlistListState.firstVisibleItemScrollOffset
+                        
+                        val cardCenterY = targetScreenY + (playlistItemHeightPx / 2f)
                         val visibleItems = playlistListState.layoutInfo.visibleItemsInfo
                         if (visibleItems.isEmpty()) currentDraggedIndex
                         else {
                             val songItems = visibleItems.filter { it.index > 0 }
                             if (songItems.isEmpty()) currentDraggedIndex
                             else {
-                                val cardCenterY = targetScreenY + (playlistItemHeightPx / 2f)
                                 val closestItem = songItems.minByOrNull { item ->
                                     val itemCenter = item.offset + (item.size / 2f)
                                     kotlin.math.abs(cardCenterY - itemCenter)
@@ -2102,17 +2119,17 @@ fun PlaylistDetailView(
                                 } else currentDraggedIndex
                             }
                         }
-                    }
-
-                    val from = draggedIndex
-                    val to = currentTargetIndex
-                    if (from != null && to != null && from != to) {
-                        val updated = displaySongs.toMutableList()
-                        if (from in updated.indices && to in updated.indices) {
-                            val itemToMove = updated.removeAt(from)
-                            updated.add(to, itemToMove)
-                            displaySongs = updated
-                            draggedIndex = to
+                    }.collect { target ->
+                        currentTargetIndex = target
+                        val from = draggedIndex
+                        if (from != null && target != null && from != target) {
+                            val updated = displaySongs.toMutableList()
+                            if (from in updated.indices && target in updated.indices) {
+                                val itemToMove = updated.removeAt(from)
+                                updated.add(target, itemToMove)
+                                displaySongs = updated
+                                draggedIndex = target
+                            }
                         }
                     }
                 }
@@ -2669,7 +2686,7 @@ fun PlaylistDetailView(
                                 modifier = Modifier.weight(1f),
                                 verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                items(filteredAddSongs) { song ->
+                                items(filteredAddSongs, key = { it.id }) { song ->
                                     Card(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -2818,7 +2835,7 @@ fun PlaylistStatsDialog(
                                 Text("No skip-over destination events logged for this playlist.", color = Color.Gray, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 8.dp))
                             }
                         } else {
-                            items(keepers) { entry ->
+                            items(keepers, key = { it.songId }) { entry ->
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -2903,7 +2920,7 @@ fun PlaylistStatsDialog(
                                 Text("No tracks inside this playlist.", color = Color.Gray, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 8.dp))
                             }
                         } else {
-                            items(sortedStats) { stat ->
+                            items(sortedStats, key = { it.songId }) { stat ->
                                 Card(
                                     modifier = Modifier.fillMaxWidth(),
                                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
@@ -3674,8 +3691,10 @@ fun SearchDetailDialog(
 @Composable
 fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
     val queue by viewModel.currentQueueFlow.collectAsState()
-    var displayQueue by remember(queue) { mutableStateOf(queue) }
-    val activeIndex = viewModel.activeQueueIndex
+    val rawActiveIndex = viewModel.activeQueueIndex
+    val queueOffset = if (rawActiveIndex > 0 && rawActiveIndex < queue.size) rawActiveIndex else 0
+    var displayQueue by remember(queue, queueOffset) { mutableStateOf(queue.drop(queueOffset)) }
+    val activeIndex = if (rawActiveIndex in queue.indices) 0 else rawActiveIndex
     val playerManager by viewModel.playerManager.collectAsState()
     val currentSong = playerManager?.currentPlayingSong?.collectAsState(null)?.value
     val manualIds by viewModel.manualQueueSongInstanceIds.collectAsState()
@@ -3746,13 +3765,19 @@ fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
                     var currentTargetIndex by remember { mutableStateOf<Int?>(null) }
                     val currentTargetIndexRef = rememberUpdatedState(currentTargetIndex)
 
-                    LaunchedEffect(currentDraggedIndex, targetScreenY, listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset) {
-                        currentTargetIndex = if (currentDraggedIndex == null) null
-                        else {
+                    LaunchedEffect(currentDraggedIndex) {
+                        if (currentDraggedIndex == null) {
+                            currentTargetIndex = null
+                            return@LaunchedEffect
+                        }
+                        androidx.compose.runtime.snapshotFlow {
+                            listState.firstVisibleItemIndex
+                            listState.firstVisibleItemScrollOffset
+                            
+                            val cardCenterY = targetScreenY + (itemHeightPx / 2f)
                             val visibleItems = listState.layoutInfo.visibleItemsInfo
                             if (visibleItems.isEmpty()) currentDraggedIndex
                             else {
-                                val cardCenterY = targetScreenY + (itemHeightPx / 2f)
                                 val closestItem = visibleItems.minByOrNull { item ->
                                     val itemCenter = item.offset + (item.size / 2f)
                                     kotlin.math.abs(cardCenterY - itemCenter)
@@ -3761,17 +3786,18 @@ fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
                                     closestItem.index.coerceIn(0, displayQueue.size - 1)
                                 } else currentDraggedIndex
                             }
-                        }
-
-                        val from = draggedIndex
-                        val to = currentTargetIndex
-                        if (from != null && to != null && from != to) {
-                            val updated = displayQueue.toMutableList()
-                            if (from in updated.indices && to in updated.indices) {
-                                val itemToMove = updated.removeAt(from)
-                                updated.add(to, itemToMove)
-                                displayQueue = updated
-                                draggedIndex = to
+                        }.collect { target ->
+                            currentTargetIndex = target
+                            val from = draggedIndex
+                            if (from != null && target != null && from != target) {
+                                val updated = displayQueue.toMutableList()
+                                if (from in updated.indices && target in updated.indices) {
+                                    val itemToMove = updated.removeAt(from)
+                                    updated.add(target, itemToMove)
+                                    displayQueue = updated
+                                    viewModel.reorderQueue(from + queueOffset, target + queueOffset)
+                                    draggedIndex = target
+                                }
                             }
                         }
                     }
@@ -3871,7 +3897,7 @@ fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .clickable { viewModel.playQueueSongAt(index) }
+                                            .clickable { viewModel.playQueueSongAt(index + queueOffset) }
                                             .padding(8.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
@@ -4185,7 +4211,7 @@ fun EqualizerDialog(onDismiss: () -> Unit) {
                             androidx.compose.foundation.lazy.LazyRow(
                                 horizontalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
-                                itemsIndexed(presets) { index, presetName ->
+                                itemsIndexed(presets, key = { index, _ -> index }) { index, presetName ->
                                     val isSelected = selectedPresetIndex == index
                                     Box(
                                         modifier = Modifier

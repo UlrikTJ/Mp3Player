@@ -14,14 +14,17 @@ object ShuffleEngine {
         if (n <= 1) return 0
         val cleaned = formula.replace(" ", "").lowercase()
         return try {
+            val divisorRegex = Regex("""n/(\d+(?:\.\d+)?)""")
+            val divisorMatch = divisorRegex.find(cleaned)
+
             val result: Double = when {
-                cleaned.contains("n/2") -> n.toDouble() / 2.0
-                cleaned.contains("n/3") -> n.toDouble() / 3.0
-                cleaned.contains("n/4") -> n.toDouble() / 4.0
-                cleaned.contains("n/5") -> n.toDouble() / 5.0
+                divisorMatch != null -> {
+                    val divisor = divisorMatch.groupValues[1].toDoubleOrNull() ?: 3.0
+                    n.toDouble() / divisor
+                }
                 cleaned.contains("n-1") -> (n - 1).toDouble()
                 cleaned.contains("log") -> {
-                    val logVal = Math.log(n.toDouble())
+                    val logVal = kotlin.math.log10(n.toDouble())
                     if (cleaned.startsWith("3*")) 3.0 * logVal else logVal
                 }
                 cleaned.contains("n^2") -> (n * n).toDouble()

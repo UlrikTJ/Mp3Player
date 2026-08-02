@@ -88,40 +88,40 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     // Data streams
     val allSongs: StateFlow<List<SongEntity>> = musicDao.getAllSongsFlow()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     // Selected Playlist ID flow for details and stats
     val selectedPlaylistId = MutableStateFlow<Int?>(null)
 
     val allPlaylists: StateFlow<List<PlaylistEntity>> = musicDao.getAllPlaylistsFlow()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val playlistSongs: StateFlow<List<SongEntity>> = selectedPlaylistId.flatMapLatest { id ->
         id?.let { musicDao.getSongsForPlaylistFlow(it) } ?: flowOf(emptyList())
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val playlistStats: StateFlow<List<SongStats>> = selectedPlaylistId.flatMapLatest { id ->
         id?.let { musicDao.getPlaylistSongStatsFlow(it) } ?: flowOf(emptyList())
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val playlistKeepers: StateFlow<List<KeeperLeaderboardEntry>> = selectedPlaylistId.flatMapLatest { id ->
         id?.let { musicDao.getPlaylistKeepersLeaderboardFlow(it) } ?: flowOf(emptyList())
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val songsNotInPlaylist: StateFlow<List<SongEntity>> = selectedPlaylistId.flatMapLatest { id ->
         id?.let { musicDao.getSongsNotInPlaylistFlow(it) } ?: flowOf(emptyList())
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
 
     val songStats: StateFlow<List<SongStats>> = musicDao.getSongStatsFlow()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     val keepersLeaderboard: StateFlow<List<KeeperLeaderboardEntry>> = musicDao.getKeepersLeaderboardFlow()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     // UI Search & Download States
     private val _searchResults = MutableStateFlow<List<SearchTrackDto>>(emptyList())
@@ -521,24 +521,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 // Sequential playback: start from the tapped song's position in the list
                 val songIndex = candidateSongs.indexOfFirst { it.id == song.id }
                 if (songIndex >= 0) {
-                    // Reorder: songs from songIndex onward, then wrap around
-                    val reordered = candidateSongs.subList(songIndex, candidateSongs.size) +
-                        candidateSongs.subList(0, songIndex)
-                    _currentQueue.value = reordered
-                    currentQueueIndex = 0
+                    _currentQueue.value = candidateSongs
+                    currentQueueIndex = songIndex
                 } else {
                     val queueList = candidateSongs.toMutableList()
-                    if (isCross && songB != null && songB.id != song.id) {
-                        queueList.removeAll { it.id == song.id || it.id == songB.id }
-                        queueList.add(0, song)
-                        queueList.add(1, songB)
-                    } else {
-                        val idx = queueList.indexOfFirst { it.id == song.id }
-                        if (idx > 0) {
-                            val s = queueList.removeAt(idx)
-                            queueList.add(0, s)
-                        }
-                    }
+                    queueList.add(0, song)
                     _currentQueue.value = queueList
                     currentQueueIndex = 0
                 }
@@ -730,41 +717,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         val queue = _currentQueue.value
         if (queue.isEmpty()) return null
         
-        if (_useWeightedShuffle.value) {
-            val statsMap = songStats.value.associateBy { it.songId }
-            val history = _playbackHistory.value
-            if (_isLooping.value) {
-                return ShuffleEngine.selectNextSong(
-                    songs = queue,
-                    statsMap = statsMap,
-                    history = history,
-                    cooldownFormula = _cooldownFormula.value,
-                    useSkipPenalty = _useSkipPenalty.value,
-                    useKeeperBonus = _useKeeperBonus.value
-                )
-            } else {
-                val currentSong = queue.getOrNull(currentQueueIndex)
-                val tempPlayed = if (currentSong != null) _playedSongIds.value + currentSong.id else _playedSongIds.value
-                val pool = queue.filter { it.id !in tempPlayed }
-                if (pool.isEmpty()) return null
-                return ShuffleEngine.selectNextSong(
-                    songs = pool,
-                    statsMap = statsMap,
-                    history = history,
-                    cooldownFormula = _cooldownFormula.value,
-                    useSkipPenalty = _useSkipPenalty.value,
-                    useKeeperBonus = _useKeeperBonus.value
-                )
-            }
+        val nextIndex = currentQueueIndex + 1
+        return if (nextIndex < queue.size) {
+            queue[nextIndex]
+        } else if (_isLooping.value) {
+            queue.firstOrNull()
         } else {
-            val nextIndex = currentQueueIndex + 1
-            return if (nextIndex < queue.size) {
-                queue[nextIndex]
-            } else if (_isLooping.value) {
-                queue.firstOrNull()
-            } else {
-                null
-            }
+            null
         }
     }
 
@@ -780,61 +739,41 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             _playedSongIds.update { it + currentSong.id }
         }
 
-        if (_useWeightedShuffle.value) {
-            val history = _playbackHistory.value
-            val statsMap = songStats.value.associateBy { it.songId }
-            if (_isLooping.value) {
-                val nextSong = ShuffleEngine.selectNextSong(
-                    songs = queue,
-                    statsMap = statsMap,
-                    history = history,
-                    cooldownFormula = _cooldownFormula.value,
-                    useSkipPenalty = _useSkipPenalty.value,
-                    useKeeperBonus = _useKeeperBonus.value
-                )
-                if (nextSong != null) {
-                    currentQueueIndex = queue.indexOfFirst { it.id == nextSong.id }
-                    playCurrentQueueIndex(selectedPlaylistId.value)
-                } else {
-                    android.widget.Toast.makeText(getApplication(), "No songs in queue", android.widget.Toast.LENGTH_SHORT).show()
-                }
-            } else {
-                val pool = queue.filter { it.id !in _playedSongIds.value }
-                if (pool.isNotEmpty()) {
-                    val nextSong = ShuffleEngine.selectNextSong(
-                        songs = pool,
-                        statsMap = statsMap,
-                        history = history,
-                        cooldownFormula = _cooldownFormula.value,
-                        useSkipPenalty = _useSkipPenalty.value,
-                        useKeeperBonus = _useKeeperBonus.value
-                    )
-                    if (nextSong != null) {
-                        currentQueueIndex = queue.indexOfFirst { it.id == nextSong.id }
-                        playCurrentQueueIndex(selectedPlaylistId.value)
-                    } else {
-                        android.widget.Toast.makeText(getApplication(), "No songs in queue", android.widget.Toast.LENGTH_SHORT).show()
-                    }
-                } else {
-                    _playerManager.value?.pause()
-                    _playedSongIds.value = emptySet()
-                    android.widget.Toast.makeText(getApplication(), "No songs in queue", android.widget.Toast.LENGTH_SHORT).show()
-                }
-            }
+        val nextIndex = currentQueueIndex + 1
+        if (nextIndex < queue.size) {
+            currentQueueIndex = nextIndex
+            playCurrentQueueIndex(selectedPlaylistId.value)
         } else {
-            val nextIndex = currentQueueIndex + 1
-            if (nextIndex < queue.size) {
-                currentQueueIndex = nextIndex
+            if (_isLooping.value) {
+                currentQueueIndex = 0
                 playCurrentQueueIndex(selectedPlaylistId.value)
             } else {
-                if (_isLooping.value) {
-                    currentQueueIndex = 0
-                    playCurrentQueueIndex(selectedPlaylistId.value)
-                } else {
-                    _playerManager.value?.pause()
-                    android.widget.Toast.makeText(getApplication(), "No songs in queue", android.widget.Toast.LENGTH_SHORT).show()
-                }
+                _playerManager.value?.pause()
+                _playedSongIds.value = emptySet()
+                android.widget.Toast.makeText(getApplication(), "No songs in queue", android.widget.Toast.LENGTH_SHORT).show()
             }
+        }
+    }
+
+    fun reorderQueue(fromIndex: Int, toIndex: Int) {
+        val queue = _currentQueue.value.toMutableList()
+        if (fromIndex in queue.indices && toIndex in queue.indices && fromIndex != toIndex) {
+            val item = queue.removeAt(fromIndex)
+            queue.add(toIndex, item)
+            _currentQueue.value = queue
+            
+            // Adjust active index if affected
+            if (currentQueueIndex == fromIndex) {
+                currentQueueIndex = toIndex
+            } else if (currentQueueIndex in (fromIndex + 1)..toIndex) {
+                currentQueueIndex--
+            } else if (currentQueueIndex in toIndex..<fromIndex) {
+                currentQueueIndex++
+            }
+            
+            // Sync up the crossfade manager's next song just in case
+            val nextUpcoming = getNextSongForQueuePublic()
+            _playerManager.value?.setNextSong(nextUpcoming)
         }
     }
 
@@ -1275,14 +1214,18 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun extractMediaDuration(filePath: String): Long {
+        var retriever: android.media.MediaMetadataRetriever? = null
         return try {
-            val retriever = android.media.MediaMetadataRetriever()
+            retriever = android.media.MediaMetadataRetriever()
             retriever.setDataSource(filePath)
             val time = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)
-            retriever.release()
             time?.toLongOrNull() ?: 0L
         } catch (e: Exception) {
             0L
+        } finally {
+            try {
+                retriever?.release()
+            } catch (e: Exception) {}
         }
     }
 

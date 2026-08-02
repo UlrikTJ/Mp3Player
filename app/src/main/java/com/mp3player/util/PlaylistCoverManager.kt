@@ -14,8 +14,14 @@ import android.net.Uri
 import com.mp3player.data.entity.SongEntity
 import java.io.File
 import java.io.FileOutputStream
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
+import android.util.Log
 
 object PlaylistCoverManager {
+    private val generationLocks = ConcurrentHashMap<Int, ReentrantLock>()
+
 
     fun getCoverFile(context: Context, playlistId: Int): File {
         val dir = File(context.filesDir, "playlist_covers")
@@ -35,11 +41,14 @@ object PlaylistCoverManager {
     }
 
     fun getOrCreateCover(context: Context, playlistId: Int, songs: List<SongEntity>, stats: List<com.mp3player.data.dao.SongStats> = emptyList()): File? {
-        val coverFile = getCoverFile(context, playlistId)
-        if (coverFile.exists() && coverFile.length() > 0) {
-            return coverFile
+        val lock = generationLocks.getOrPut(playlistId) { ReentrantLock() }
+        return lock.withLock {
+            val coverFile = getCoverFile(context, playlistId)
+            if (coverFile.exists() && coverFile.length() > 0) {
+                return@withLock coverFile
+            }
+            generateAndSaveCover(context, playlistId, songs, stats)
         }
-        return generateAndSaveCover(context, playlistId, songs, stats)
     }
 
     fun generateAndSaveCover(context: Context, playlistId: Int, songs: List<SongEntity>, stats: List<com.mp3player.data.dao.SongStats> = emptyList()): File? {
@@ -86,6 +95,10 @@ object PlaylistCoverManager {
         }
 
         val roundedCollage = getRoundedCornerBitmap(collage, 32f)
+        
+        // Clean up unused bitmaps
+        loadedBitmaps.forEach { if (!it.isRecycled) it.recycle() }
+        if (!collage.isRecycled) collage.recycle()
 
         return try {
             FileOutputStream(targetFile).use { out ->
@@ -93,7 +106,7 @@ object PlaylistCoverManager {
             }
             targetFile
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e("PlaylistCoverManager", "Failed to save cover", e)
             null
         }
     }
@@ -158,18 +171,25 @@ object PlaylistCoverManager {
             if (fileBmp != null && !fileBmp.isRecycled) return fileBmp
 
             // Try 3: MediaMetadataRetriever embed artwork fallback
+            var retriever: MediaMetadataRetriever? = null
             try {
-                val retriever = MediaMetadataRetriever()
+                retriever = MediaMetadataRetriever()
                 retriever.setDataSource(context, uri)
                 val artBytes = retriever.embeddedPicture
-                retriever.release()
                 if (artBytes != null) {
                     return BitmapFactory.decodeByteArray(artBytes, 0, artBytes.size)
                 }
-            } catch (e: Exception) { }
+            } catch (e: Exception) {
+                Log.e("PlaylistCoverManager", "Failed to decode embedded picture", e)
+            } finally {
+                try {
+                    retriever?.release()
+                } catch (e: Exception) {}
+            }
 
             null
         } catch (e: Exception) {
+            Log.e("PlaylistCoverManager", "Error loading scaled bitmap", e)
             null
         }
     }

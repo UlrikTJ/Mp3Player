@@ -16,12 +16,18 @@ data class EqualizerBand(
 object EqualizerManager {
     private var equalizerA: Equalizer? = null
     private var equalizerB: Equalizer? = null
+    private var appContext: Context? = null
+    private var lastSessionA: Int = 0
+    private var lastSessionB: Int = 0
 
     var isEnabled: Boolean = true
         private set
 
     fun init(context: Context, sessionA: Int, sessionB: Int) {
         release()
+        appContext = context.applicationContext
+        lastSessionA = sessionA
+        lastSessionB = sessionB
 
         try {
             // Broadcast open session so system/third-party EQ apps detect it
@@ -118,6 +124,26 @@ object EqualizerManager {
     }
 
     fun release() {
+        val context = appContext
+        if (context != null) {
+            if (lastSessionA != 0) {
+                try {
+                    val intentA = Intent(AudioEffect.ACTION_CLOSE_AUDIO_EFFECT_CONTROL_SESSION)
+                    intentA.putExtra(AudioEffect.EXTRA_AUDIO_SESSION, lastSessionA)
+                    intentA.putExtra(AudioEffect.EXTRA_PACKAGE_NAME, context.packageName)
+                    context.sendBroadcast(intentA)
+                } catch (e: Exception) { e.printStackTrace() }
+            }
+            if (lastSessionB != 0) {
+                try {
+                    val intentB = Intent(AudioEffect.ACTION_CLOSE_AUDIO_EFFECT_CONTROL_SESSION)
+                    intentB.putExtra(AudioEffect.EXTRA_AUDIO_SESSION, lastSessionB)
+                    intentB.putExtra(AudioEffect.EXTRA_PACKAGE_NAME, context.packageName)
+                    context.sendBroadcast(intentB)
+                } catch (e: Exception) { e.printStackTrace() }
+            }
+        }
+        
         try {
             equalizerA?.release()
         } catch (e: Exception) {

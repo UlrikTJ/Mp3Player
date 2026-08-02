@@ -17,7 +17,7 @@ import com.mp3player.data.entity.*
         ChainSkipDetailEntity::class,
         IgnoredFileEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -28,6 +28,13 @@ abstract class AppDatabase : RoomDatabase() {
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
+        private val MIGRATION_2_3 = object : androidx.room.migration.Migration(2, 3) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("CREATE INDEX IF NOT EXISTS `index_playback_events_playlistId` ON `playback_events` (`playlistId`)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS `index_playback_events_sessionId` ON `playback_events` (`sessionId`)")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -35,7 +42,8 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "mp3player_database"
                 )
-                .fallbackToDestructiveMigration() // Destructive migration for simple personal development workflow
+                .addMigrations(MIGRATION_2_3)
+                .fallbackToDestructiveMigration(false) // Changed from true to false
                 .build()
                 INSTANCE = instance
                 instance

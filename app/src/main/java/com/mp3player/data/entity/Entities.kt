@@ -51,7 +51,7 @@ data class PlaylistSongCrossRef(
     foreignKeys = [
         ForeignKey(entity = SongEntity::class, parentColumns = ["id"], childColumns = ["songId"], onDelete = ForeignKey.CASCADE)
     ],
-    indices = [Index("songId")]
+    indices = [Index("songId"), Index("playlistId"), Index("sessionId")]
 )
 data class PlaybackEventEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,

@@ -219,7 +219,7 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
                                 action = AudioService.ACTION_PLAY_SPECIFIC_SONG
                                 putExtra(AudioService.EXTRA_SONG_ID, upcomingSong.id)
                             }
-                            remoteViews.setOnClickPendingIntent(slotIds[i], getServicePendingIntent(context, 100 + i, playSongIntent))
+                            remoteViews.setOnClickPendingIntent(slotIds[i], getServicePendingIntent(context, 1000000 + upcomingSong.id, playSongIntent))
                         } else {
                             remoteViews.setImageViewResource(slotIds[i], R.drawable.ic_music_note)
                         }

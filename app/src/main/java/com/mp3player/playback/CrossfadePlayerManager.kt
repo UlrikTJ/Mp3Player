@@ -141,6 +141,9 @@ class CrossfadePlayerManager(
                 error.printStackTrace()
                 if (player === currentPlayer) {
                     onTrackEnded()
+                } else if (player === nextPlayer && isCrossfading) {
+                    cancelCrossfade()
+                    onTrackEnded()
                 }
             }
         })
@@ -166,7 +169,6 @@ class CrossfadePlayerManager(
         nextSong = nextSongToPrepare
         _playbackProgress.value = 0L
 
-        currentPlayer.stop()
         val mediaItem = MediaItem.fromUri(Uri.parse(song.filePath))
         currentPlayer.setMediaItem(mediaItem)
         currentPlayer.volume = 1.0f
@@ -254,6 +256,12 @@ class CrossfadePlayerManager(
         val crossfadeRunnable = object : Runnable {
             override fun run() {
                 if (!isCrossfading) return
+                
+                // If the user paused during the fade, just wait.
+                if (!currentPlayer.isPlaying && !nextPlayer.isPlaying) {
+                    handler.postDelayed(this, stepDuration)
+                    return
+                }
                 
                 currentStep++
                 val ratio = (currentStep.toFloat() / fadeSteps).coerceIn(0f, 1f)

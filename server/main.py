@@ -179,7 +179,8 @@ def download_mp3(request: DownloadRequest, background_tasks: BackgroundTasks):
     if resolved_thumb_url:
         try:
             temp_cover_path = os.path.join(TEMP_DIR, f"{unique_id}_cover.jpg")
-            urllib.request.urlretrieve(resolved_thumb_url, temp_cover_path)
+            with urllib.request.urlopen(resolved_thumb_url, timeout=10) as response, open(temp_cover_path, 'wb') as out_file:
+                shutil.copyfileobj(response, out_file)
         except Exception as e:
             print(f"Failed to fetch thumbnail: {e}")
             temp_cover_path = None
@@ -213,19 +214,23 @@ def download_mp3(request: DownloadRequest, background_tasks: BackgroundTasks):
         print(f"Error tagging MP3 metadata: {e}")
         # We proceed even if tagging fails, so the user still gets the file
 
-    # 4. Schedule cleanup of temp files
-    files_to_cleanup = [expected_mp3_path]
-    if temp_cover_path:
-        files_to_cleanup.append(temp_cover_path)
-    background_tasks.add_task(cleanup_files, files_to_cleanup)
-
-    # 5. Serve the file
-    safe_filename = "".join(c for c in resolved_title if c.isalnum() or c in (' ', '_', '-')).strip() or "song"
-    return FileResponse(
-        path=expected_mp3_path,
-        media_type="audio/mpeg",
-        filename=f"{safe_filename}.mp3"
-    )
+    try:
+        # 4. Schedule cleanup of temp files
+        files_to_cleanup = [expected_mp3_path]
+        if temp_cover_path:
+            files_to_cleanup.append(temp_cover_path)
+        background_tasks.add_task(cleanup_files, files_to_cleanup)
+    
+        # 5. Serve the file
+        safe_filename = "".join(c for c in resolved_title if c.isalnum() or c in (' ', '_', '-')).strip() or "song"
+        return FileResponse(
+            path=expected_mp3_path,
+            media_type="audio/mpeg",
+            filename=f"{safe_filename}.mp3"
+        )
+    except Exception as e:
+        cleanup_files([expected_mp3_path] + ([temp_cover_path] if temp_cover_path else []))
+        raise e
 
 if __name__ == "__main__":
     import uvicorn
