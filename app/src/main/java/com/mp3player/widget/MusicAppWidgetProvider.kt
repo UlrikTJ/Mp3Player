@@ -122,7 +122,8 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
 
                 // High-Quality Thumbnail Artwork Loading (Cropped to exact 1:1 square with rounded corners)
                 val artPath = song?.artworkPath
-                var artLoaded = fa                if (song != null) {
+                var artLoaded = false
+                if (song != null) {
                     if (artPath != null && artPath.isNotBlank()) {
                         val rawBitmap = artworkBitmap ?: loadScaledBitmap(context, artPath)
                         if (rawBitmap != null && !rawBitmap.isRecycled) {
@@ -187,21 +188,24 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
                     )
                     for (i in slotIds.indices) {
                         val upcomingSong = recentSongs.getOrNull(i)
-                        if (upcomingSong != null && !upcomingSong.artworkPath.isNullOrBlank()) {
-                            val bmp = loadScaledBitmap(context, upcomingSong.artworkPath)
-                            if (bmp != null && !bmp.isRecycled) {
-                                try {
-                                    val squared = cropToSquare(bmp)
-                                    val miniScaled = Bitmap.createScaledBitmap(squared, 72, 72, true)
-                                    val roundedMini = getRoundedCornerBitmap(miniScaled, 12f)
-                                    remoteViews.setImageViewBitmap(slotIds[i], roundedMini)
-                                } catch (e: Exception) {
+                        if (upcomingSong != null) {
+                            if (!upcomingSong.artworkPath.isNullOrBlank()) {
+                                val bmp = loadScaledBitmap(context, upcomingSong.artworkPath)
+                                if (bmp != null && !bmp.isRecycled) {
+                                    try {
+                                        val squared = cropToSquare(bmp)
+                                        val miniScaled = Bitmap.createScaledBitmap(squared, 72, 72, true)
+                                        val roundedMini = getRoundedCornerBitmap(miniScaled, 12f)
+                                        remoteViews.setImageViewBitmap(slotIds[i], roundedMini)
+                                    } catch (e: Exception) {
+                                        remoteViews.setImageViewResource(slotIds[i], R.drawable.ic_music_note)
+                                    }
+                                } else {
                                     remoteViews.setImageViewResource(slotIds[i], R.drawable.ic_music_note)
                                 }
                             } else {
                                 remoteViews.setImageViewResource(slotIds[i], R.drawable.ic_music_note)
                             }
-   }
 
                             // 1-Tap Play Intent for upcoming/top song
                             val playSongIntent = Intent(context, AudioService::class.java).apply {
@@ -214,6 +218,7 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
                         }
                     }
                 }
+
 
                 // PendingIntents for standard controls
                 val prevIntent = Intent(context, AudioService::class.java).apply {
