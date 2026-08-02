@@ -27,6 +27,10 @@ class CrossfadePlayerManager(
     
     private var currentPlayer: ExoPlayer = playerA
     private var nextPlayer: ExoPlayer = playerB
+
+    init {
+        EqualizerManager.init(context, playerA.audioSessionId, playerB.audioSessionId)
+    }
     
     private var currentSong: SongEntity? = null
     var nextSong: SongEntity? = null

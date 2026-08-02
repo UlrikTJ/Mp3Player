@@ -297,8 +297,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             isRepeatEnabled = _isLooping.value,
             progressMs = progressMs,
             recentSongs = upcomingOrTopSongs.value,
-            playlistSongs = activePlaylistSongs.value
+            playlistSongs = activePlaylistSongs.value,
+            activePlaylistId = _activePlaylistId.value ?: allPlaylists.value.firstOrNull()?.id,
+            stats = playlistStats.value
         )
+
     }
 
 

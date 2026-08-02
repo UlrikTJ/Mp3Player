@@ -56,6 +56,8 @@ class AudioService : Service() {
     var onUpcomingOrTopSongsListener: (() -> List<SongEntity>)? = null
     var onPlaySpecificSongListener: ((Int) -> Unit)? = null
     var onPlayFirstPlaylistListener: (() -> Unit)? = null
+    var onActivePlaylistIdListener: (() -> Int?)? = null
+    var onPlaylistStatsListener: (() -> List<com.mp3player.data.dao.SongStats>)? = null
 
     private fun updateWidgetFromService(song: SongEntity?, isPlaying: Boolean, progressMs: Long = 0L) {
 
@@ -64,6 +66,8 @@ class AudioService : Service() {
         val repeat = sharedPrefs.getBoolean("is_looping", false)
         val upcomingSongs = onUpcomingOrTopSongsListener?.invoke() ?: emptyList()
         val playlistSongs = onActivePlaylistSongsListener?.invoke() ?: emptyList()
+        val activePlaylistId = onActivePlaylistIdListener?.invoke()
+        val stats = onPlaylistStatsListener?.invoke() ?: emptyList()
         MusicAppWidgetProvider.updateWidget(
             context = this,
             song = song,
@@ -73,9 +77,12 @@ class AudioService : Service() {
             artworkBitmap = currentArtworkBitmap,
             progressMs = progressMs,
             recentSongs = upcomingSongs,
-            playlistSongs = playlistSongs
+            playlistSongs = playlistSongs,
+            activePlaylistId = activePlaylistId,
+            stats = stats
         )
     }
+
 
     inner class AudioBinder : Binder() {
         fun getService(): AudioService = this@AudioService

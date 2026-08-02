@@ -14,6 +14,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.border
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -195,7 +198,14 @@ class MainActivity : ComponentActivity() {
             boundService.onPlayFirstPlaylistListener = {
                 viewModel.playFirstPlaylistOrDefault()
             }
+            boundService.onActivePlaylistIdListener = {
+                viewModel.activePlaylistId.value ?: viewModel.allPlaylists.value.firstOrNull()?.id
+            }
+            boundService.onPlaylistStatsListener = {
+                viewModel.playlistStats.value
+            }
         }
+
 
 
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -1605,7 +1615,8 @@ fun PlaylistCardCover(
         viewModel.getPlaylistSongStatsFlow(playlistId)
     }.collectAsState(initial = emptyList())
     
-    PlaylistCollageCover(songs = songs, stats = stats, modifier = modifier)
+    PlaylistCollageCover(songs = songs, stats = stats, playlistId = playlistId, modifier = modifier)
+
 }
 
 fun getFileNameFromUri(context: Context, uri: android.net.Uri): String? {
@@ -2124,8 +2135,10 @@ fun PlaylistDetailView(
                                     PlaylistCollageCover(
                                         songs = songs,
                                         stats = playlistStatsForCover,
+                                        playlistId = playlist.id,
                                         modifier = Modifier.size(90.dp)
                                     )
+
 
                                     Spacer(modifier = Modifier.width(16.dp))
 
@@ -3060,30 +3073,17 @@ fun SettingsScreen(viewModel: MusicViewModel, onOpenLibrary: () -> Unit = {}) {
 
         HorizontalDivider()
 
-        val playerManager by viewModel.playerManager.collectAsState()
-        val context = LocalContext.current
-        
+        var showEqualizerDialog by remember { mutableStateOf(false) }
+
         Button(
-            onClick = {
-                val audioSessionId = playerManager?.audioSessionId ?: 0
-                if (audioSessionId != 0) {
-                    try {
-                        val intent = Intent(AudioEffect.ACTION_DISPLAY_AUDIO_EFFECT_CONTROL_PANEL).apply {
-                            putExtra(AudioEffect.EXTRA_AUDIO_SESSION, audioSessionId)
-                            putExtra(AudioEffect.EXTRA_PACKAGE_NAME, context.packageName)
-                            putExtra(AudioEffect.EXTRA_CONTENT_TYPE, AudioEffect.CONTENT_TYPE_MUSIC)
-                        }
-                        context.startActivity(intent)
-                    } catch (e: Exception) {
-                        Toast.makeText(context, "No equalizer app found on this device", Toast.LENGTH_SHORT).show()
-                    }
-                } else {
-                    Toast.makeText(context, "Start playback first", Toast.LENGTH_SHORT).show()
-                }
-            },
+            onClick = { showEqualizerDialog = true },
             modifier = Modifier.fillMaxWidth()
         ) {
             Text("Equalizer")
+        }
+
+        if (showEqualizerDialog) {
+            EqualizerDialog(onDismiss = { showEqualizerDialog = false })
         }
 
         var showGlobalStats by remember { mutableStateOf(false) }
@@ -4084,3 +4084,278 @@ fun QueueDialog(viewModel: MusicViewModel, onDismiss: () -> Unit) {
 }
 
 }
+
+@Composable
+fun EqualizerDialog(onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    var isEnabled by remember { mutableStateOf(com.mp3player.playback.EqualizerManager.isEnabled) }
+    var bands by remember { mutableStateOf(com.mp3player.playback.EqualizerManager.getBands()) }
+    var presets by remember { mutableStateOf(com.mp3player.playback.EqualizerManager.getPresets()) }
+    var selectedPresetIndex by remember { mutableStateOf<Int?>(null) }
+
+    val accentColor = Color(0xFF1DB954) // Vibrant Music Green
+
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(
+            usePlatformDefaultWidth = false
+        )
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = Color(0xFF101012)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .statusBarsPadding()
+                    .navigationBarsPadding()
+            ) {
+                // Top App Bar
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        IconButton(onClick = onDismiss) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Close",
+                                tint = Color.White
+                            )
+                        }
+                        Column {
+                            Text(
+                                "Audio Equalizer",
+                                color = Color.White,
+                                fontSize = 22.sp,
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                            )
+                            Text(
+                                if (isEnabled) "Hardware DSP Active" else "Bypassed",
+                                color = if (isEnabled) accentColor else Color.Gray,
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+
+                    Switch(
+                        checked = isEnabled,
+                        onCheckedChange = {
+                            isEnabled = it
+                            com.mp3player.playback.EqualizerManager.setEnabled(it)
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = accentColor,
+                            uncheckedThumbColor = Color.Gray,
+                            uncheckedTrackColor = Color(0xFF2C2C2E)
+                        )
+                    )
+                }
+
+                HorizontalDivider(color = Color(0xFF1E1E22))
+
+                // Body
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 20.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(24.dp)
+                ) {
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    // Presets Section
+                    if (presets.isNotEmpty()) {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text(
+                                "PRESETS",
+                                color = Color(0xFF8E8E93),
+                                fontSize = 12.sp,
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                                letterSpacing = 1.2.sp
+                            )
+                            androidx.compose.foundation.lazy.LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                itemsIndexed(presets) { index, presetName ->
+                                    val isSelected = selectedPresetIndex == index
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(24.dp))
+                                            .background(if (isSelected) accentColor else Color(0xFF1E1E22))
+                                            .border(
+                                                width = 1.dp,
+                                                color = if (isSelected) accentColor else Color(0xFF2C2C32),
+                                                shape = RoundedCornerShape(24.dp)
+                                            )
+                                            .clickable {
+                                                selectedPresetIndex = index
+                                                com.mp3player.playback.EqualizerManager.usePreset(index.toShort())
+                                                bands = com.mp3player.playback.EqualizerManager.getBands()
+                                            }
+                                            .padding(horizontal = 18.dp, vertical = 10.dp)
+                                    ) {
+                                        Text(
+                                            text = presetName,
+                                            color = if (isSelected) Color.Black else Color.White,
+                                            fontSize = 14.sp,
+                                            fontWeight = if (isSelected) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Medium
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Bands Section
+                    if (bands.isNotEmpty()) {
+                        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    "FREQUENCY BANDS",
+                                    color = Color(0xFF8E8E93),
+                                    fontSize = 12.sp,
+                                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                                    letterSpacing = 1.2.sp
+                                )
+                                TextButton(
+                                    onClick = {
+                                        selectedPresetIndex = null
+                                        bands.forEach {
+                                            com.mp3player.playback.EqualizerManager.setBandLevel(it.band, 0)
+                                        }
+                                        bands = com.mp3player.playback.EqualizerManager.getBands()
+                                    }
+                                ) {
+                                    Text("Reset to Flat", color = accentColor, fontSize = 13.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+                                }
+                            }
+
+                            bands.forEach { bandInfo ->
+                                val freqLabel = if (bandInfo.centerFreqHz >= 1000) {
+                                    "${bandInfo.centerFreqHz / 1000} kHz"
+                                } else {
+                                    "${bandInfo.centerFreqHz} Hz"
+                                }
+                                val dbValInt = bandInfo.level / 100
+                                val dbLabel = if (dbValInt > 0) "+$dbValInt dB" else "$dbValInt dB"
+
+                                Surface(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(16.dp),
+                                    color = Color(0xFF18181B),
+                                    border = BorderStroke(1.dp, Color(0xFF26262A))
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                freqLabel,
+                                                color = Color.White,
+                                                fontSize = 15.sp,
+                                                fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
+                                            )
+                                            Box(
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .background(
+                                                        when {
+                                                            dbValInt > 0 -> accentColor.copy(alpha = 0.2f)
+                                                            dbValInt < 0 -> Color(0xFFFF5252).copy(alpha = 0.2f)
+                                                            else -> Color(0xFF26262A)
+                                                        }
+                                                    )
+                                                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                                            ) {
+                                                Text(
+                                                    dbLabel,
+                                                    color = when {
+                                                        dbValInt > 0 -> accentColor
+                                                        dbValInt < 0 -> Color(0xFFFF5252)
+                                                        else -> Color.LightGray
+                                                    },
+                                                    fontSize = 13.sp,
+                                                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                                                )
+                                            }
+                                        }
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Slider(
+                                            value = bandInfo.level.toFloat(),
+                                            onValueChange = { newLevel ->
+                                                val levelShort = newLevel.toInt().toShort()
+                                                com.mp3player.playback.EqualizerManager.setBandLevel(bandInfo.band, levelShort)
+                                                selectedPresetIndex = null
+                                                bands = bands.map {
+                                                    if (it.band == bandInfo.band) it.copy(level = levelShort) else it
+                                                }
+                                            },
+                                            valueRange = bandInfo.minLevel.toFloat()..bandInfo.maxLevel.toFloat(),
+                                            enabled = isEnabled,
+                                            colors = SliderDefaults.colors(
+                                                thumbColor = if (isEnabled) accentColor else Color.Gray,
+                                                activeTrackColor = if (isEnabled) accentColor else Color.Gray,
+                                                inactiveTrackColor = Color(0xFF26262A)
+                                            )
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(24.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                "Start audio playback to activate hardware equalizer bands.",
+                                color = Color.Gray,
+                                fontSize = 14.sp
+                            )
+                        }
+                    }
+
+                    // Footer system launch option
+                    TextButton(
+                        onClick = {
+                            val intent = Intent(android.media.audiofx.AudioEffect.ACTION_DISPLAY_AUDIO_EFFECT_CONTROL_PANEL).apply {
+                                putExtra(android.media.audiofx.AudioEffect.EXTRA_PACKAGE_NAME, context.packageName)
+                                putExtra(android.media.audiofx.AudioEffect.EXTRA_CONTENT_TYPE, android.media.audiofx.AudioEffect.CONTENT_TYPE_MUSIC)
+                            }
+                            try {
+                                context.startActivity(intent)
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "System Equalizer activity not found", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Try Opening System EQ Panel", fontSize = 13.sp, color = Color(0xFF8E8E93))
+                    }
+
+                    Spacer(modifier = Modifier.height(32.dp))
+                }
+            }
+        }
+    }
+}
+

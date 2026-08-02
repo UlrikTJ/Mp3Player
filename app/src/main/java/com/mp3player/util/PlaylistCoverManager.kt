@@ -101,14 +101,36 @@ object PlaylistCoverManager {
     fun loadScaledBitmap(context: Context, path: String?): Bitmap? {
         if (path.isNullOrBlank()) return null
         if (path.startsWith("http://") || path.startsWith("https://")) {
-            return null
+            return try {
+                val loader = coil.ImageLoader(context)
+                val request = coil.request.ImageRequest.Builder(context)
+                    .data(path)
+                    .allowHardware(false)
+                    .size(128, 128)
+                    .memoryCachePolicy(coil.request.CachePolicy.ENABLED)
+                    .diskCachePolicy(coil.request.CachePolicy.ENABLED)
+                    .networkCachePolicy(coil.request.CachePolicy.READ_ONLY)
+                    .build()
+                val snapshot = loader.diskCache?.get(path)
+                if (snapshot != null) {
+                    val file = snapshot.data.toFile()
+                    val bmp = BitmapFactory.decodeFile(file.absolutePath)
+                    if (bmp != null && !bmp.isRecycled) return bmp
+                }
+                null
+            } catch (e: Exception) {
+                null
+            }
         }
+
+
         return try {
             val uri = if (path.startsWith("content://") || path.startsWith("file://")) {
                 Uri.parse(path)
             } else {
                 Uri.fromFile(File(path))
             }
+
 
 
             // Try 1: ContentResolver openInputStream
