@@ -122,15 +122,14 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
 
                 // High-Quality Thumbnail Artwork Loading (Cropped to exact 1:1 square with rounded corners)
                 val artPath = song?.artworkPath
-                var artLoaded = false
-                if (song != null) {
+                var artLoaded = fa                if (song != null) {
                     if (artPath != null && artPath.isNotBlank()) {
                         val rawBitmap = artworkBitmap ?: loadScaledBitmap(context, artPath)
                         if (rawBitmap != null && !rawBitmap.isRecycled) {
                             try {
                                 val squared = cropToSquare(rawBitmap)
-                                val scaled = Bitmap.createScaledBitmap(squared, 160, 160, true)
-                                val rounded = getRoundedCornerBitmap(scaled, 24f)
+                                val scaled = Bitmap.createScaledBitmap(squared, 128, 128, true)
+                                val rounded = getRoundedCornerBitmap(scaled, 16f)
                                 remoteViews.setImageViewBitmap(R.id.widget_album_art, rounded)
                                 artLoaded = true
                             } catch (e: Exception) {
@@ -139,17 +138,16 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
                         }
                     }
                     if (!artLoaded) {
-                        // Song playing but artwork missing or loading: show consistent 1:1 rounded placeholder (never flash 3x3 collage)
-                        val defaultBitmap = Bitmap.createBitmap(160, 160, Bitmap.Config.ARGB_8888)
+                        // Song playing but artwork missing or loading: show consistent 1:1 rounded placeholder
+                        val defaultBitmap = Bitmap.createBitmap(128, 128, Bitmap.Config.ARGB_8888)
                         defaultBitmap.eraseColor(android.graphics.Color.DKGRAY)
-                        remoteViews.setImageViewBitmap(R.id.widget_album_art, getRoundedCornerBitmap(defaultBitmap, 24f))
+                        remoteViews.setImageViewBitmap(R.id.widget_album_art, getRoundedCornerBitmap(defaultBitmap, 16f))
                     }
                 } else {
                     // Idle state (no active song): Use the playlist's 3x3 collage bitmap
                     val collageBmp = createPlaylistCollageBitmap(context, playlistSongs, recentSongs)
                     remoteViews.setImageViewBitmap(R.id.widget_album_art, collageBmp)
                 }
-
 
                 // Shuffle & Repeat active vector icons & intents for 4x2 widget
                 if (layoutResId == R.layout.widget_music_4x2) {
@@ -178,7 +176,6 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
                     val collageBmp = createPlaylistCollageBitmap(context, playlistSongs, recentSongs)
                     remoteViews.setImageViewBitmap(R.id.widget_recent_playlist_art, collageBmp)
 
-
                     // Upcoming / Top 6 songs thumbnails in bottom row (1:1 square cropped with rounded corners and 1-tap play intent)
                     val slotIds = intArrayOf(
                         R.id.widget_recent_1,
@@ -196,15 +193,15 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
                                 try {
                                     val squared = cropToSquare(bmp)
                                     val miniScaled = Bitmap.createScaledBitmap(squared, 72, 72, true)
-                                    val roundedMini = getRoundedCornerBitmap(miniScaled, 14f)
+                                    val roundedMini = getRoundedCornerBitmap(miniScaled, 12f)
                                     remoteViews.setImageViewBitmap(slotIds[i], roundedMini)
-
                                 } catch (e: Exception) {
                                     remoteViews.setImageViewResource(slotIds[i], R.drawable.ic_music_note)
                                 }
                             } else {
                                 remoteViews.setImageViewResource(slotIds[i], R.drawable.ic_music_note)
                             }
+   }
 
                             // 1-Tap Play Intent for upcoming/top song
                             val playSongIntent = Intent(context, AudioService::class.java).apply {
@@ -278,21 +275,20 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
                 loadScaledBitmap(context, song.artworkPath)?.let { cropToSquare(it) }
             }.distinct().take(9)
 
-            val size = 120
+            val size = 96
             if (loadedBitmaps.isNotEmpty()) {
                 val top9Bitmaps = List(9) { index -> loadedBitmaps[index % loadedBitmaps.size] }
                 val collage = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
                 val canvas = android.graphics.Canvas(collage)
-                val tileSize = 40
+                val tileSize = 32
                 for (i in 0 until 9) {
                     val row = i / 3
                     val col = i % 3
                     val mini = Bitmap.createScaledBitmap(top9Bitmaps[i], tileSize, tileSize, true)
                     canvas.drawBitmap(mini, (col * tileSize).toFloat(), (row * tileSize).toFloat(), null)
                 }
-                return getRoundedCornerBitmap(collage, 20f)
+                return getRoundedCornerBitmap(collage, 16f)
             }
-
 
             // Fallback: Sleek dark card with music note icon (never a plain gray box)
             val cardBmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
@@ -303,10 +299,11 @@ class MusicAppWidgetProvider : BaseMusicWidgetProvider(R.layout.widget_music_4x1
             canvas.drawRect(0f, 0f, size.toFloat(), size.toFloat(), paint)
             
             val iconDrawable = androidx.core.content.ContextCompat.getDrawable(context, R.drawable.ic_music_note)
-            iconDrawable?.setBounds(45, 45, 135, 135)
+            iconDrawable?.setBounds(24, 24, 72, 72)
             iconDrawable?.draw(canvas)
             
-            return getRoundedCornerBitmap(cardBmp, 24f)
+            return getRoundedCornerBitmap(cardBmp, 16f)
+
         }
 
 
