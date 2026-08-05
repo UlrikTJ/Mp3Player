@@ -15,6 +15,7 @@ Mp3Player is not just another music app. It features seamless 5-second crossfadi
 - **Library Stats & Leaderboards**: Track your most played songs, skip rates, and "Keepers" across the global library or specific playlists.
 - **Hardware Integration**: Full support for wireless earbud gestures, lock-screen controls, auto-pause on disconnect, and native System Equalizer integration.
 - **Persistent Playback State**: Close the app and come back later. Your entire queue, current track, and playback position are fully restored exactly as you left them.
+- **Automated CI/CD Releases**: Integrated GitHub Actions pipeline automatically builds debug/release APKs and attaches them to published GitHub Releases.
 
 ---
 
@@ -33,6 +34,7 @@ Mp3Player is not just another music app. It features seamless 5-second crossfadi
 - **State Management**: Reactive state management with `StateFlow` and `combine` operators.
 - **Image Pipeline**: `PlaylistCoverManager` caches 3x3 grid collages into local PNGs for 0ms load times and 100% visual consistency across the app and system widgets.
 - **Background Sync**: Asynchronous Room queries ensure widgets display the correct context even when the app is dead.
+- **CI/CD Pipeline**: GitHub Actions (`.github/workflows/release.yml`) builds and publishes APKs automatically on GitHub releases.
 
 ### 2. Python Backend
 - **Tech Stack**: Python 3.10+, FastAPI, `yt-dlp`, `ffmpeg`, `mutagen`.
@@ -63,6 +65,17 @@ Mp3Player is not just another music app. It features seamless 5-second crossfadi
   - **Queue Previews**: Displays thumbnail slots for upcoming tracks with direct play intents.
   - **Zero-Flicker Updates**: Employs `partiallyUpdateAppWidget` for 500ms progress ticks without re-rendering artwork.
   - **Unified Collage Engine**: The app and widgets share the exact same `PlaylistCoverManager` logic to guarantee visual sync.
+
+---
+
+## 📦 Automated Releases & CI/CD
+
+This repository includes a pre-configured **GitHub Actions** CI/CD pipeline (`.github/workflows/release.yml`). 
+
+Whenever you publish a release on GitHub:
+1. The workflow triggers automatically on Ubuntu runners with JDK 17.
+2. It builds both Debug and Release APK variants (`./gradlew assembleDebug assembleRelease`).
+3. The resulting `.apk` files are automatically uploaded and attached directly to the GitHub Release assets.
 
 ---
 
