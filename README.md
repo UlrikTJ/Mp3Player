@@ -2,7 +2,7 @@
 
 > A modern, high-fidelity Android Music Player built with **Jetpack Compose**, **ExoPlayer**, **Room**, and a custom **FastAPI** backend. 
 
-Mp3Player is not just another music app. It features seamless 5-second crossfading playback, smart weighted shuffle statistics, wireless earbud/headset gestures, lock-screen controls, a 3-section queue manager, system equalizer integration, interactive widgets, and background audio downloading via YouTube Music.
+Mp3Player is a music app that features crossfading, custom weight based shuffle allowing full customizeability, wireless earbud/headset gestures, lock-screen controls, system equalizer integration, interactive widgets, and background audio downloading via YouTube Music and many other features you would expect from a music player.
 
 ---
 
@@ -12,8 +12,8 @@ Mp3Player is not just another music app. It features seamless 5-second crossfadi
 - **Advanced 3-Section Queue**: A unified queue manager featuring *Now Playing*, *Added to Queue* (manual additions), and *Next from {Playlist}*. Drag-and-drop support across all sections.
 - **Smart Weighted Shuffle**: Tracks you skip frequently are penalized. Tracks you manually skip to get a selection bonus. You can also fine-tune song likelihood multipliers manually!
 - **Rich Interactive Widgets**: High-performance home screen widgets with zero-flicker progress updates, direct 1-tap play intents, 3x3 playlist collages, and upcoming queue previews.
-- **Library Stats & Leaderboards**: Track your most played songs, skip rates, and "Keepers" across the global library or specific playlists.
-- **Hardware Integration**: Full support for wireless earbud gestures, lock-screen controls, auto-pause on disconnect, and native System Equalizer integration.
+- **Library Stats & Leaderboards**: Track your most played songs, skip rates, and "Keepers" (songs you have skipped to) across the global library or specific playlists.
+- **Hardware Integration**: Full support for wired and wireless earbud gestures, lock-screen controls, auto-pause on disconnect, and native System Equalizer integration.
 - **Persistent Playback State**: Close the app and come back later. Your entire queue, current track, and playback position are fully restored exactly as you left them.
 
 ---
@@ -89,5 +89,3 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 3. Head over to **Home** or **Search**, pick a track, and enjoy!
 
 ---
-
-*Built with ❤️ for true music lovers.*
