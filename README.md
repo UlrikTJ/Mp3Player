@@ -15,7 +15,6 @@ Mp3Player is not just another music app. It features seamless 5-second crossfadi
 - **Library Stats & Leaderboards**: Track your most played songs, skip rates, and "Keepers" across the global library or specific playlists.
 - **Hardware Integration**: Full support for wireless earbud gestures, lock-screen controls, auto-pause on disconnect, and native System Equalizer integration.
 - **Persistent Playback State**: Close the app and come back later. Your entire queue, current track, and playback position are fully restored exactly as you left them.
-- **Automated CI/CD Releases**: Integrated GitHub Actions pipeline automatically builds debug/release APKs and attaches them to published GitHub Releases.
 
 ---
 
@@ -34,7 +33,6 @@ Mp3Player is not just another music app. It features seamless 5-second crossfadi
 - **State Management**: Reactive state management with `StateFlow` and `combine` operators.
 - **Image Pipeline**: `PlaylistCoverManager` caches 3x3 grid collages into local PNGs for 0ms load times and 100% visual consistency across the app and system widgets.
 - **Background Sync**: Asynchronous Room queries ensure widgets display the correct context even when the app is dead.
-- **CI/CD Pipeline**: GitHub Actions (`.github/workflows/release.yml`) builds and publishes APKs automatically on GitHub releases.
 
 ### 2. Python Backend
 - **Tech Stack**: Python 3.10+, FastAPI, `yt-dlp`, `ffmpeg`, `mutagen`.
@@ -68,20 +66,13 @@ Mp3Player is not just another music app. It features seamless 5-second crossfadi
 
 ---
 
-## 📦 Automated Releases & CI/CD
-
-This repository includes a pre-configured **GitHub Actions** CI/CD pipeline (`.github/workflows/release.yml`). 
-
-Whenever you publish a release on GitHub:
-1. The workflow triggers automatically on Ubuntu runners with JDK 17.
-2. It builds both Debug and Release APK variants (`./gradlew assembleDebug assembleRelease`).
-3. The resulting `.apk` files are automatically uploaded and attached directly to the GitHub Release assets.
-
----
-
 ## 🚀 Getting Started
 
-### 1. Run the FastAPI Backend
+### 1. Download & Install the Android App
+- **Option A (Direct Download)**: Head over to the **[Releases](https://github.com/UlrikTJ/Mp3Player/releases)** page on GitHub and download the latest `.apk` file directly to your Android device.
+- **Option B (Build from Source)**: Open the project folder in **Android Studio** and run `./gradlew assembleDebug` to build and deploy to a connected device or emulator.
+
+### 2. Run the FastAPI Backend
 *Requirements: Python 3.10+ and ffmpeg.*
 
 ```bash
@@ -92,11 +83,10 @@ pip install -r requirements.txt
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-### 2. Launch the Android App
-1. Open the project folder in **Android Studio**.
-2. Build and run the app on your Android device (`./gradlew assembleDebug`).
-3. Open **Settings** in the app and input your server's IP address (e.g. `100.x.x.x` or `192.168.x.x`).
-4. Head over to **Home** or **Search**, pick a track, and enjoy!
+### 3. Connect & Enjoy
+1. Launch the **Mp3Player** app on your phone.
+2. Open **Settings** in the app and input your server's IP address (e.g., `100.x.x.x` or `192.168.x.x`).
+3. Head over to **Home** or **Search**, pick a track, and enjoy!
 
 ---
 
