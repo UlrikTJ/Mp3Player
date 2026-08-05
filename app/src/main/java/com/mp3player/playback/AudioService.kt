@@ -30,6 +30,7 @@ import com.mp3player.data.entity.SongEntity
 import com.mp3player.widget.MusicAppWidgetProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -44,6 +45,9 @@ class AudioService : Service() {
 
     private var currentArtworkBitmap: Bitmap? = null
     private var audioManager: AudioManager? = null
+
+    private var playbackStateJob: Job? = null
+    private var progressUpdateJob: Job? = null
 
     private val audioFocusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
         when (focusChange) {
@@ -146,6 +150,7 @@ class AudioService : Service() {
         super.onCreate()
         createNotificationChannel()
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        PlaybackStateManager.init(this)
 
         // Immediate foreground start satisfies Android's 5-second requirement 100% of the time
         val initialNotification = NotificationCompat.Builder(this, CHANNEL_ID)
@@ -238,7 +243,7 @@ class AudioService : Service() {
             e.printStackTrace()
         }
 
-        CoroutineScope(Dispatchers.Main).launch {
+        playbackStateJob = CoroutineScope(Dispatchers.Main).launch {
             playerManager.isPlaying.collect { isPlaying ->
                 if (isPlaying) requestAudioFocus()
                 playerManager.currentPlayingSong.value?.let { song ->
@@ -248,10 +253,14 @@ class AudioService : Service() {
             }
         }
 
-        CoroutineScope(Dispatchers.Main).launch {
+        progressUpdateJob = CoroutineScope(Dispatchers.Main).launch {
             playerManager.playbackProgress.collect { progressMs ->
                 playerManager.currentPlayingSong.value?.let { song ->
                     MusicAppWidgetProvider.updateProgressOnly(this@AudioService, playerManager.isPlaying.value, progressMs, song.durationMs)
+                }
+                // Save seek position periodically for state restoration
+                if (progressMs > 0 && progressMs % 5000 < 250) {
+                    PlaybackStateManager.saveSeekPosition(progressMs)
                 }
             }
         }
@@ -259,6 +268,10 @@ class AudioService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (Intent.ACTION_MEDIA_BUTTON == intent?.action) {
+            androidx.media.session.MediaButtonReceiver.handleIntent(mediaSession, intent)
+        }
+
         when (intent?.action) {
             ACTION_PLAY_PAUSE -> {
                 if (playerManager.currentPlayingSong.value != null) {
@@ -273,15 +286,30 @@ class AudioService : Service() {
                         updateWidgetFromService(song, nextState, playerManager.playbackProgress.value)
                     }
                 } else {
-                    onPlayFirstPlaylistListener?.invoke()
+                    // Try to restore from saved state first (cold start from widget)
+                    if (restoreAndResumeSavedState()) {
+                        // Successfully restored - state will be playing
+                    } else {
+                        // Fallback to ViewModel listener (if Activity is alive)
+                        onPlayFirstPlaylistListener?.invoke()
+                    }
                 }
             }
 
             ACTION_SKIP_NEXT -> {
-                onTrackEndedListener?.invoke()
+                if (playerManager.currentPlayingSong.value != null) {
+                    onTrackEndedListener?.invoke()
+                } else if (restoreAndResumeSavedState()) {
+                    // Restored state, now skip
+                    onTrackEndedListener?.invoke()
+                }
             }
             ACTION_SKIP_PREVIOUS -> {
-                onSkipPreviousListener?.invoke()
+                if (playerManager.currentPlayingSong.value != null) {
+                    onSkipPreviousListener?.invoke()
+                } else if (restoreAndResumeSavedState()) {
+                    onSkipPreviousListener?.invoke()
+                }
             }
             ACTION_TOGGLE_SHUFFLE -> {
                 onToggleShuffleListener?.invoke()
@@ -297,6 +325,39 @@ class AudioService : Service() {
             }
         }
         return Service.START_NOT_STICKY
+    }
+
+    /**
+     * Attempts to restore the last saved playback state and resume playing.
+     * Called when the service receives a widget intent but has no active song.
+     * Returns true if state was successfully restored.
+     */
+    private fun restoreAndResumeSavedState(): Boolean {
+        val savedState = PlaybackStateManager.getSavedState() ?: return false
+        if (savedState.filePath.isBlank()) return false
+        
+        // Verify the file still exists (for local files)
+        if (!savedState.filePath.startsWith("http") && !java.io.File(savedState.filePath).exists()) {
+            return false
+        }
+        
+        val restoredSong = com.mp3player.data.entity.SongEntity(
+            id = savedState.currentSongId,
+            title = savedState.title,
+            artist = savedState.artist,
+            album = "",
+            filePath = savedState.filePath,
+            artworkPath = savedState.artworkPath,
+            durationMs = savedState.durationMs,
+            source = if (savedState.filePath.startsWith("http")) "YOUTUBE" else "LOCAL",
+            youtubeVideoId = null
+        )
+        
+        playerManager.play(restoredSong)
+        if (savedState.seekPositionMs > 0) {
+            playerManager.seekTo(savedState.seekPositionMs)
+        }
+        return true
     }
 
     override fun onBind(intent: Intent?): IBinder {
@@ -447,14 +508,25 @@ class AudioService : Service() {
                     startForeground(NOTIFICATION_ID, notification)
                 }
             } else {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    stopForeground(STOP_FOREGROUND_DETACH)
-                } else {
-                    @Suppress("DEPRECATION")
-                    stopForeground(false)
+                // Spotify-style: keep foreground with low-priority notification to prevent process death
+                // The notification is non-ongoing so the user can swipe it away
+                try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+                    } else {
+                        startForeground(NOTIFICATION_ID, notification)
+                    }
+                } catch (e: Exception) {
+                    // Fallback: detach foreground and just show notification
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                        stopForeground(STOP_FOREGROUND_DETACH)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        stopForeground(false)
+                    }
+                    val mgr = getSystemService(NotificationManager::class.java)
+                    mgr?.notify(NOTIFICATION_ID, notification)
                 }
-                val manager = getSystemService(NotificationManager::class.java)
-                manager?.notify(NOTIFICATION_ID, notification)
             }
         } catch (e: Exception) {
             e.printStackTrace()
@@ -531,6 +603,8 @@ class AudioService : Service() {
             }
             noisyReceiverRegistered = false
         }
+        playbackStateJob?.cancel()
+        progressUpdateJob?.cancel()
         onTrackEndedListener = null
         onTrackStartedListener = null
         onCrossfadeCompletedListener = null

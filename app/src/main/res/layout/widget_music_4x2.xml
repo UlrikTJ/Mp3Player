@@ -10,8 +10,7 @@
     <!-- Top Section: Album Art Left + Info & Controls Right -->
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
+        android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="center_vertical">
 
@@ -150,89 +149,86 @@
         android:layout_marginBottom="6dp"
         android:background="#26FFFFFF" />
 
-    <!-- Bottom Section: Active Playlist Collage (Left) + 6 Upcoming/Top Songs (Right) -->
+    <!-- Bottom Section: Active Playlist Collage (Left) + 5 Upcoming/Top Songs (Right) -->
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="48dp"
+        android:layout_height="0dp"
+        android:layout_weight="1"
         android:orientation="horizontal"
         android:gravity="center_vertical">
 
-        <!-- Active Playlist Collage Thumbnail Slot (44x44dp) -->
+        <!-- Active Playlist Collage Thumbnail Slot (56x56dp) -->
         <ImageView
             android:id="@+id/widget_recent_playlist_art"
-            android:layout_width="44dp"
-            android:layout_height="44dp"
+            android:layout_width="56dp"
+            android:layout_height="56dp"
             android:scaleType="centerCrop"
             android:src="@drawable/ic_music_note"
             android:clipToOutline="true"
             android:contentDescription="Playlist Collage" />
 
+        <FrameLayout android:layout_width="0dp" android:layout_height="0dp" android:layout_weight="1" />
+
         <LinearLayout
             android:layout_width="1dp"
-            android:layout_height="30dp"
-            android:layout_marginStart="6dp"
-            android:layout_marginEnd="6dp"
+            android:layout_height="40dp"
             android:background="#22FFFFFF" />
 
-        <!-- 6 Upcoming / Top Songs Thumbnails (36x36dp each) -->
+        <FrameLayout android:layout_width="0dp" android:layout_height="0dp" android:layout_weight="1" />
+
+        <!-- 5 Upcoming / Top Songs Thumbnails (52x52dp each) -->
         <ImageView
             android:id="@+id/widget_recent_1"
-            android:layout_width="36dp"
-            android:layout_height="36dp"
+            android:layout_width="52dp"
+            android:layout_height="52dp"
             android:scaleType="centerCrop"
             android:src="@drawable/ic_music_note"
             android:clipToOutline="true"
             android:contentDescription="Upcoming Song 1" />
 
+        <FrameLayout android:layout_width="0dp" android:layout_height="0dp" android:layout_weight="1" />
+
         <ImageView
             android:id="@+id/widget_recent_2"
-            android:layout_width="36dp"
-            android:layout_height="36dp"
-            android:layout_marginStart="4dp"
+            android:layout_width="52dp"
+            android:layout_height="52dp"
             android:scaleType="centerCrop"
             android:src="@drawable/ic_music_note"
             android:clipToOutline="true"
             android:contentDescription="Upcoming Song 2" />
 
+        <FrameLayout android:layout_width="0dp" android:layout_height="0dp" android:layout_weight="1" />
+
         <ImageView
             android:id="@+id/widget_recent_3"
-            android:layout_width="36dp"
-            android:layout_height="36dp"
-            android:layout_marginStart="4dp"
+            android:layout_width="52dp"
+            android:layout_height="52dp"
             android:scaleType="centerCrop"
             android:src="@drawable/ic_music_note"
             android:clipToOutline="true"
             android:contentDescription="Upcoming Song 3" />
 
+        <FrameLayout android:layout_width="0dp" android:layout_height="0dp" android:layout_weight="1" />
+
         <ImageView
             android:id="@+id/widget_recent_4"
-            android:layout_width="36dp"
-            android:layout_height="36dp"
-            android:layout_marginStart="4dp"
+            android:layout_width="52dp"
+            android:layout_height="52dp"
             android:scaleType="centerCrop"
             android:src="@drawable/ic_music_note"
             android:clipToOutline="true"
             android:contentDescription="Upcoming Song 4" />
 
+        <FrameLayout android:layout_width="0dp" android:layout_height="0dp" android:layout_weight="1" />
+
         <ImageView
             android:id="@+id/widget_recent_5"
-            android:layout_width="36dp"
-            android:layout_height="36dp"
-            android:layout_marginStart="4dp"
+            android:layout_width="52dp"
+            android:layout_height="52dp"
             android:scaleType="centerCrop"
             android:src="@drawable/ic_music_note"
             android:clipToOutline="true"
             android:contentDescription="Upcoming Song 5" />
-
-        <ImageView
-            android:id="@+id/widget_recent_6"
-            android:layout_width="36dp"
-            android:layout_height="36dp"
-            android:layout_marginStart="4dp"
-            android:scaleType="centerCrop"
-            android:src="@drawable/ic_music_note"
-            android:clipToOutline="true"
-            android:contentDescription="Upcoming Song 6" />
 
     </LinearLayout>
 

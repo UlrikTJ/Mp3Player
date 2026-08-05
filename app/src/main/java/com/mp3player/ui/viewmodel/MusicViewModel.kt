@@ -16,6 +16,7 @@ import com.mp3player.data.network.*
 import com.mp3player.playback.ShuffleEngine
 import com.mp3player.playback.PlaybackStatsTracker
 import com.mp3player.playback.CrossfadePlayerManager
+import com.mp3player.playback.PlaybackStateManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -51,6 +52,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val musicDao: MusicDao = db.musicDao()
     private val statsTracker = PlaybackStatsTracker(musicDao, viewModelScope)
     private val streamUrlCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val httpClient = okhttp3.OkHttpClient()
 
     private val sharedPrefs: SharedPreferences = application.getSharedPreferences("Mp3PlayerPrefs", Context.MODE_PRIVATE)
 
@@ -227,6 +229,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     init {
         statsTracker.onSessionStarted()
         com.mp3player.util.PlaylistCoverManager.clearStaleCovers(getApplication())
+        PlaybackStateManager.init(getApplication())
+        restoreSavedPlaybackState()
 
         // Automatically push widget updates whenever upcoming songs, active playlist, or current track update
         viewModelScope.launch {
@@ -243,6 +247,44 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 val hasMissingArtworks = allSongs.value.any { it.artworkPath.isNullOrBlank() && !failedArtworkSongIds.contains(it.id) }
                 if (hasMissingArtworks) {
                     triggerAutoArtworkFetcher()
+                }
+            }
+        }
+    }
+
+    /**
+     * Restores saved playback state from PlaybackStateManager on app startup.
+     * This ensures the app shows the correct song after being killed and reopened.
+     */
+    private fun restoreSavedPlaybackState() {
+        val savedState = PlaybackStateManager.getSavedState() ?: return
+        viewModelScope.launch {
+            // Wait for songs to load from DB first
+            val songs = allSongs.first { it.isNotEmpty() }
+            
+            // Restore active playlist
+            if (savedState.activePlaylistId != null) {
+                _activePlaylistId.value = savedState.activePlaylistId
+                _activePlaylistName.value = savedState.activePlaylistName
+            }
+            
+            // Restore shuffle/repeat state
+            _useWeightedShuffle.value = savedState.shuffleOn
+            _isLooping.value = savedState.repeatOn
+            
+            // Restore queue from saved song IDs
+            val restoredQueue = savedState.queueSongIds.mapNotNull { id ->
+                songs.find { it.id == id }
+            }
+            if (restoredQueue.isNotEmpty()) {
+                _currentQueue.value = restoredQueue
+                currentQueueIndex = savedState.queueIndex.coerceIn(0, restoredQueue.size - 1)
+                
+                // Set the current song for display (don't auto-play)
+                val currentSong = restoredQueue.getOrNull(currentQueueIndex)
+                if (currentSong != null) {
+                    // The playerManager will prepare (not play) this song once service binds
+                    _playerManager.value?.prepare(currentSong, getNextSongForQueuePublic())
                 }
             }
         }
@@ -309,6 +351,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         val newValue = !_isLooping.value
         _isLooping.value = newValue
         sharedPrefs.edit().putBoolean("is_looping", newValue).apply()
+        PlaybackStateManager.saveShuffleRepeatState(_useWeightedShuffle.value, _isLooping.value)
         updateWidgets()
     }
 
@@ -353,10 +396,41 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     _playerManager.value?.setNextSong(getNextSongForQueuePublic())
                 }
+                PlaybackStateManager.saveQueue(_currentQueue.value.map { it.id }, currentQueueIndex)
+                PlaybackStateManager.saveShuffleRepeatState(_useWeightedShuffle.value, _isLooping.value)
                 updateWidgets()
             }
         } else {
-            updateWidgets()
+            val activePId = _activePlaylistId.value
+            viewModelScope.launch {
+                val candidateSongs = if (activePId != null) {
+                    withContext(Dispatchers.IO) { musicDao.getSongsForPlaylist(activePId) }
+                } else {
+                    allSongs.value
+                }
+                
+                if (candidateSongs.isNotEmpty()) {
+                    if (newValue) {
+                        val randomSong = candidateSongs.random()
+                        val pool = candidateSongs.filter { it.id != randomSong.id }
+                        val shuffledSeq = generateShuffledQueueSequence(pool, limit = 49)
+                        val newQueue = mutableListOf<SongEntity>()
+                        newQueue.add(randomSong)
+                        newQueue.addAll(shuffledSeq)
+                        _currentQueue.value = newQueue
+                        currentQueueIndex = 0
+                        _playerManager.value?.prepare(randomSong, newQueue.getOrNull(1))
+                    } else {
+                        val firstSong = candidateSongs.first()
+                        _currentQueue.value = candidateSongs
+                        currentQueueIndex = 0
+                        _playerManager.value?.prepare(firstSong, candidateSongs.getOrNull(1))
+                    }
+                }
+                PlaybackStateManager.saveQueue(_currentQueue.value.map { it.id }, currentQueueIndex)
+                PlaybackStateManager.saveShuffleRepeatState(_useWeightedShuffle.value, _isLooping.value)
+                updateWidgets()
+            }
         }
     }
 
@@ -593,6 +667,19 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
         val nextSong = getNextSongForQueuePublic()
         _playerManager.value?.play(song, nextSong)
+        
+        // Persist playback state for widget cold-start recovery
+        PlaybackStateManager.saveCurrentSong(
+            songId = song.id,
+            title = song.title,
+            artist = song.artist,
+            artworkPath = song.artworkPath,
+            durationMs = song.durationMs,
+            filePath = song.filePath
+        )
+        PlaybackStateManager.saveQueue(_currentQueue.value.map { it.id }, currentQueueIndex)
+        PlaybackStateManager.saveShuffleRepeatState(_useWeightedShuffle.value, _isLooping.value)
+        PlaybackStateManager.saveActivePlaylist(_activePlaylistId.value, _activePlaylistName.value)
     }
 
     private fun updateRecentlyPlayed(song: SongEntity) {
@@ -627,6 +714,17 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
         val nextUpcoming = getNextSongForQueuePublic()
         _playerManager.value?.setNextSong(nextUpcoming)
+
+        // Persist updated state
+        PlaybackStateManager.saveCurrentSong(
+            songId = incomingSong.id,
+            title = incomingSong.title,
+            artist = incomingSong.artist,
+            artworkPath = incomingSong.artworkPath,
+            durationMs = incomingSong.durationMs,
+            filePath = incomingSong.filePath
+        )
+        PlaybackStateManager.saveQueue(_currentQueue.value.map { it.id }, currentQueueIndex)
     }
 
     fun playPreviousSong() {
@@ -774,6 +872,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             // Sync up the crossfade manager's next song just in case
             val nextUpcoming = getNextSongForQueuePublic()
             _playerManager.value?.setNextSong(nextUpcoming)
+            
+            PlaybackStateManager.saveQueue(_currentQueue.value.map { it.id }, currentQueueIndex)
         }
     }
 
@@ -851,6 +951,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: Exception) {
                 e.printStackTrace()
                 _downloadProgress.update { it.toMutableMap().apply { remove(videoId) } } // error
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(getApplication(), "Download failed: ${e.localizedMessage}", android.widget.Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }
@@ -1373,7 +1476,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                         } else {
                             failedArtworkSongIds.add(song.id)
                         }
-                        Thread.sleep(800)
+                        kotlinx.coroutines.delay(800)
                     } catch (e: Exception) {
                         e.printStackTrace()
                         failedArtworkSongIds.add(song.id)
@@ -1548,7 +1651,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch {
             try {
-                val client = okhttp3.OkHttpClient()
+                val client = httpClient
                 val request = okhttp3.Request.Builder()
                     .url("https://suggestqueries.google.com/complete/search?client=firefox&ds=yt&q=${java.net.URLEncoder.encode(query, "UTF-8")}")
                     .build()

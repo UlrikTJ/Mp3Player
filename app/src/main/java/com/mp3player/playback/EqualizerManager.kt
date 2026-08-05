@@ -156,5 +156,56 @@ object EqualizerManager {
         }
         equalizerA = null
         equalizerB = null
+        try { bassBoostA?.release() } catch (e: Exception) {}
+        try { bassBoostB?.release() } catch (e: Exception) {}
+        try { virtualizerA?.release() } catch (e: Exception) {}
+        try { virtualizerB?.release() } catch (e: Exception) {}
+        bassBoostA = null
+        bassBoostB = null
+        virtualizerA = null
+        virtualizerB = null
+    }
+
+    private var bassBoostA: android.media.audiofx.BassBoost? = null
+    private var bassBoostB: android.media.audiofx.BassBoost? = null
+    private var virtualizerA: android.media.audiofx.Virtualizer? = null
+    private var virtualizerB: android.media.audiofx.Virtualizer? = null
+
+    private var bassStrength: Short = 0
+    private var virtualizerStrength: Short = 0
+
+    fun getBassBoostStrength(): Short = bassStrength
+    fun getVirtualizerStrength(): Short = virtualizerStrength
+
+    fun setBassBoostStrength(strength: Short) {
+        bassStrength = strength
+        try {
+            if (bassBoostA == null && lastSessionA != 0) {
+                bassBoostA = android.media.audiofx.BassBoost(0, lastSessionA).apply { enabled = isEnabled }
+            }
+            if (bassBoostB == null && lastSessionB != 0) {
+                bassBoostB = android.media.audiofx.BassBoost(0, lastSessionB).apply { enabled = isEnabled }
+            }
+            bassBoostA?.setStrength(strength)
+            bassBoostB?.setStrength(strength)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    fun setVirtualizerStrength(strength: Short) {
+        virtualizerStrength = strength
+        try {
+            if (virtualizerA == null && lastSessionA != 0) {
+                virtualizerA = android.media.audiofx.Virtualizer(0, lastSessionA).apply { enabled = isEnabled }
+            }
+            if (virtualizerB == null && lastSessionB != 0) {
+                virtualizerB = android.media.audiofx.Virtualizer(0, lastSessionB).apply { enabled = isEnabled }
+            }
+            virtualizerA?.setStrength(strength)
+            virtualizerB?.setStrength(strength)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 }

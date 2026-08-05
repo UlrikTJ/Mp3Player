@@ -33,6 +33,7 @@ class CrossfadePlayerManager(
     }
     
     private var currentSong: SongEntity? = null
+    private var cachedDurationMs: Long = 0L
     var nextSong: SongEntity? = null
         private set
 
@@ -73,15 +74,24 @@ class CrossfadePlayerManager(
     private fun getPlayerOrSongDuration(player: ExoPlayer, song: SongEntity?): Long {
         val dur = player.duration
         if (dur != C.TIME_UNSET && dur > 0 && dur <= MAX_SANE_DURATION_MS) {
+            // Update cache when player reports valid duration
+            cachedDurationMs = dur
             return dur
+        }
+        // Return cached value if available
+        if (cachedDurationMs > 0 && cachedDurationMs <= MAX_SANE_DURATION_MS) {
+            return cachedDurationMs
         }
         if (song != null) {
             val songDur = song.durationMs
             if (songDur > 0 && songDur != 240000L && songDur <= MAX_SANE_DURATION_MS) {
+                cachedDurationMs = songDur
                 return songDur
             }
+            // File I/O fallback — only runs once per song due to caching
             val fileDur = extractDurationFromFile(song.filePath)
             if (fileDur > 0 && fileDur <= MAX_SANE_DURATION_MS) {
+                cachedDurationMs = fileDur
                 return fileDur
             }
         }
@@ -165,6 +175,7 @@ class CrossfadePlayerManager(
         }
 
         currentSong = song
+        cachedDurationMs = 0L // Reset cache for new song
         _currentPlayingSong.value = song
         nextSong = nextSongToPrepare
         _playbackProgress.value = 0L
@@ -177,6 +188,34 @@ class CrossfadePlayerManager(
         currentPlayer.play()
         _isPlaying.value = true
         onTrackStarted(song)
+
+        if (nextSongToPrepare != null) {
+            prepareNextPlayer(nextSongToPrepare)
+        }
+    }
+
+    fun prepare(song: SongEntity, nextSongToPrepare: SongEntity? = null) {
+        if (isCrossfading) {
+            cancelCrossfade()
+        }
+
+        val file = java.io.File(song.filePath)
+        if (song.id > 0 && !file.exists()) {
+            return
+        }
+
+        currentSong = song
+        cachedDurationMs = 0L
+        _currentPlayingSong.value = song
+        nextSong = nextSongToPrepare
+        _playbackProgress.value = 0L
+
+        val mediaItem = MediaItem.fromUri(Uri.parse(song.filePath))
+        currentPlayer.setMediaItem(mediaItem)
+        currentPlayer.volume = 1.0f
+        currentPlayer.prepare()
+        currentPlayer.seekTo(0L)
+        _isPlaying.value = false
 
         if (nextSongToPrepare != null) {
             prepareNextPlayer(nextSongToPrepare)
@@ -285,6 +324,7 @@ class CrossfadePlayerManager(
                     nextPlayer = tempPlayer
 
                     currentSong = incomingSong
+                    cachedDurationMs = 0L
                     _currentPlayingSong.value = incomingSong
                     nextSong = null
                     isCrossfading = false

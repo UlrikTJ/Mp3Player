@@ -149,14 +149,25 @@ abstract class MusicDao {
     """)
     abstract fun getSongStatsFlow(): Flow<List<SongStats>>
 
+    @Query("SELECT * FROM playlists ORDER BY name ASC")
+    abstract suspend fun getAllPlaylistsSync(): List<PlaylistEntity>
+
+    @Query("""
+        SELECT s.* FROM songs s
+        INNER JOIN playlist_songs ps ON s.id = ps.songId
+        WHERE ps.playlistId = :playlistId
+        ORDER BY ps.position ASC
+    """)
+    abstract suspend fun getSongsForPlaylistSync(playlistId: Int): List<SongEntity>
+
     @Query("""
         SELECT 
             s.id as songId,
             s.title,
             s.artist,
             s.baseWeight,
-            COALESCE(pe_stats.playCount, 0) as playCount,
-            COALESCE(pe_stats.skipCount, 0) as skipCount,
+            COALESCE(pe_playlist.playCount, pe_global.playCount, 0) as playCount,
+            COALESCE(pe_playlist.skipCount, pe_global.skipCount, 0) as skipCount,
             COALESCE(cse_stats.keeperCount, 0) as keeperCount
         FROM songs s
         INNER JOIN playlist_songs ps ON s.id = ps.songId
@@ -167,7 +178,50 @@ abstract class MusicDao {
             FROM playback_events
             WHERE playlistId = :playlistId
             GROUP BY songId
-        ) pe_stats ON s.id = pe_stats.songId
+        ) pe_playlist ON s.id = pe_playlist.songId
+        LEFT JOIN (
+            SELECT songId,
+                   SUM(CASE WHEN outcome = 'COMPLETED' THEN 1 ELSE 0 END) as playCount,
+                   SUM(CASE WHEN outcome IN ('SKIPPED', 'CHAIN_SKIPPED') THEN 1 ELSE 0 END) as skipCount
+            FROM playback_events
+            GROUP BY songId
+        ) pe_global ON s.id = pe_global.songId
+        LEFT JOIN (
+            SELECT cse.keeperSongId, COUNT(*) as keeperCount
+            FROM chain_skip_events cse
+            WHERE cse.sessionId IN (SELECT DISTINCT pe2.sessionId FROM playback_events pe2 WHERE pe2.playlistId = :playlistId)
+            GROUP BY cse.keeperSongId
+        ) cse_stats ON s.id = cse_stats.keeperSongId
+        WHERE ps.playlistId = :playlistId
+    """)
+    abstract suspend fun getPlaylistSongStatsSync(playlistId: Int): List<SongStats>
+
+    @Query("""
+        SELECT 
+            s.id as songId,
+            s.title,
+            s.artist,
+            s.baseWeight,
+            COALESCE(pe_playlist.playCount, pe_global.playCount, 0) as playCount,
+            COALESCE(pe_playlist.skipCount, pe_global.skipCount, 0) as skipCount,
+            COALESCE(cse_stats.keeperCount, 0) as keeperCount
+        FROM songs s
+        INNER JOIN playlist_songs ps ON s.id = ps.songId
+        LEFT JOIN (
+            SELECT songId,
+                   SUM(CASE WHEN outcome = 'COMPLETED' THEN 1 ELSE 0 END) as playCount,
+                   SUM(CASE WHEN outcome IN ('SKIPPED', 'CHAIN_SKIPPED') THEN 1 ELSE 0 END) as skipCount
+            FROM playback_events
+            WHERE playlistId = :playlistId
+            GROUP BY songId
+        ) pe_playlist ON s.id = pe_playlist.songId
+        LEFT JOIN (
+            SELECT songId,
+                   SUM(CASE WHEN outcome = 'COMPLETED' THEN 1 ELSE 0 END) as playCount,
+                   SUM(CASE WHEN outcome IN ('SKIPPED', 'CHAIN_SKIPPED') THEN 1 ELSE 0 END) as skipCount
+            FROM playback_events
+            GROUP BY songId
+        ) pe_global ON s.id = pe_global.songId
         LEFT JOIN (
             SELECT cse.keeperSongId, COUNT(*) as keeperCount
             FROM chain_skip_events cse

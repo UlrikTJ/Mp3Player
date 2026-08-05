@@ -28,6 +28,12 @@ abstract class AppDatabase : RoomDatabase() {
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
+        private val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
+            override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                database.execSQL("CREATE TABLE IF NOT EXISTS `ignored_files` (`filePath` TEXT NOT NULL, `dateAdded` INTEGER NOT NULL, PRIMARY KEY(`filePath`))")
+            }
+        }
+
         private val MIGRATION_2_3 = object : androidx.room.migration.Migration(2, 3) {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
                 database.execSQL("CREATE INDEX IF NOT EXISTS `index_playback_events_playlistId` ON `playback_events` (`playlistId`)")
@@ -42,8 +48,8 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "mp3player_database"
                 )
-                .addMigrations(MIGRATION_2_3)
-                .fallbackToDestructiveMigration(false) // Changed from true to false
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .fallbackToDestructiveMigration(true)
                 .build()
                 INSTANCE = instance
                 instance
