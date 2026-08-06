@@ -108,6 +108,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.material.icons.filled.BarChart
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.ui.text.style.TextAlign
@@ -149,6 +150,7 @@ fun PlaylistDetailView(
     var showAddSongsDialog by remember { mutableStateOf(false) }
     var showStatsDialog by remember { mutableStateOf(false) }
     var showPlaylistStats by remember { mutableStateOf(false) }
+    var showMusicVideoDialog by remember { mutableStateOf(false) }
     var showRenameDialog by remember { mutableStateOf(false) }
     var songToRemove by remember { mutableStateOf<SongEntity?>(null) }
     var showWeightEditDialog by remember { mutableStateOf<SongEntity?>(null) }
@@ -454,7 +456,7 @@ fun PlaylistDetailView(
                                     ) {
                                         Icon(Icons.Default.Edit, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(15.dp))
                                         Spacer(modifier = Modifier.width(3.dp))
-                                        Text("Rename", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp, maxLines = 1, softWrap = false)
+                                        Text("Edit", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp, maxLines = 1, softWrap = false)
                                     }
                                     TextButton(
                                         onClick = { showAddSongsDialog = true },
@@ -819,31 +821,11 @@ fun PlaylistDetailView(
         }
 
         if (showRenameDialog) {
-            var newNameInput by remember { mutableStateOf(playlist.name) }
-            AlertDialog(
-                onDismissRequest = { showRenameDialog = false },
-                title = { Text("Rename Playlist") },
-                text = {
-                    OutlinedTextField(
-                        value = newNameInput,
-                        onValueChange = { newNameInput = it },
-                        label = { Text("New Name") },
-                        singleLine = true
-                    )
-                },
-                confirmButton = {
-                    Button(
-                        onClick = {
-                            if (newNameInput.isNotBlank()) {
-                                viewModel.renamePlaylist(playlist.id, newNameInput)
-                                showRenameDialog = false
-                            }
-                        }
-                    ) { Text("Save") }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showRenameDialog = false }) { Text("Cancel") }
-                }
+            MusicVideoDetectorDialog(
+                viewModel = viewModel,
+                playlistId = playlist.id,
+                playlistName = playlist.name,
+                onDismiss = { showRenameDialog = false }
             )
         }
 

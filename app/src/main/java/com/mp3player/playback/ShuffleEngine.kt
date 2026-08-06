@@ -65,8 +65,12 @@ object ShuffleEngine {
             return songs.random() // Fallback
         }
 
-        // 2. Compute effective weights for each candidate
-        val weights = candidates.map { song ->
+        // 2. Compute effective weights and sum of weights in a single pass
+        var sumOfWeights = 0.0f
+        val weights = FloatArray(candidates.size)
+
+        for (i in candidates.indices) {
+            val song = candidates[i]
             val stats = statsMap[song.id]
             val baseWeight = song.baseWeight
 
@@ -88,12 +92,12 @@ object ShuffleEngine {
                 }
             }
 
-            val effectiveWeight = baseWeight * modifier
-            maxOf(0.05f, minOf(15.0f, effectiveWeight))
+            val effectiveWeight = maxOf(0.05f, minOf(15.0f, baseWeight * modifier))
+            weights[i] = effectiveWeight
+            sumOfWeights += effectiveWeight
         }
 
         // 3. Perform Weighted Random Selection
-        val sumOfWeights = weights.sum()
         if (sumOfWeights <= 0) {
             return candidates.random()
         }

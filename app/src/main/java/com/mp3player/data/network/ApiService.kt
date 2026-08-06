@@ -41,8 +41,15 @@ interface ApiService {
             }
 
             return try {
+                val okHttpClient = okhttp3.OkHttpClient.Builder()
+                    .connectTimeout(12, java.util.concurrent.TimeUnit.SECONDS)
+                    .readTimeout(12, java.util.concurrent.TimeUnit.SECONDS)
+                    .writeTimeout(12, java.util.concurrent.TimeUnit.SECONDS)
+                    .build()
+
                 Retrofit.Builder()
                     .baseUrl(formattedUrl)
+                    .client(okHttpClient)
                     .addConverterFactory(GsonConverterFactory.create())
                     .build()
                     .create(ApiService::class.java).also {
@@ -62,7 +69,8 @@ data class SearchTrackDto(
     val title: String,
     val uploader: String,
     val duration: Int,
-    val thumbnail: String
+    val thumbnail: String,
+    val is_likely_music_video: Boolean = false
 )
 
 // Simple type alias to match python name

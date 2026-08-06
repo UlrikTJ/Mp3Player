@@ -13,6 +13,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.drawable.BitmapDrawable
 import android.media.AudioManager
+import android.util.Log
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
@@ -31,6 +32,7 @@ import com.mp3player.widget.MusicAppWidgetProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -45,13 +47,31 @@ class AudioService : Service() {
 
     private var currentArtworkBitmap: Bitmap? = null
     private var audioManager: AudioManager? = null
+    private lateinit var voiceCommandManager: VoiceCommandManager
 
     private var playbackStateJob: Job? = null
     private var progressUpdateJob: Job? = null
+    private var voiceStopJob: Job? = null
 
     private val audioFocusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
         when (focusChange) {
-            AudioManager.AUDIOFOCUS_LOSS, AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+            AudioManager.AUDIOFOCUS_LOSS -> {
+                // Permanent focus loss (another app took over) — always pause
+                if (playerManager.isPlaying.value) {
+                    playerManager.pause()
+                    playerManager.currentPlayingSong.value?.let { song ->
+                        updateNotification(song, false)
+                        updateWidgetFromService(song, false, playerManager.playbackProgress.value)
+                    }
+                }
+            }
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                // Transient focus loss — SpeechRecognizer grabs the mic and causes this.
+                // While voice control is active we ignore it to keep music playing.
+                if (this::voiceCommandManager.isInitialized && voiceCommandManager.isActive) {
+                    Log.d("AudioService", "Ignoring AUDIOFOCUS_LOSS_TRANSIENT (voice recognition active)")
+                    return@OnAudioFocusChangeListener
+                }
                 if (playerManager.isPlaying.value) {
                     playerManager.pause()
                     playerManager.currentPlayingSong.value?.let { song ->
@@ -89,6 +109,7 @@ class AudioService : Service() {
     var onTrackStartedListener: ((SongEntity) -> Unit)? = null
     var onCrossfadeCompletedListener: ((SongEntity) -> Unit)? = null
     var onPrepareNextSongListener: (() -> SongEntity?)? = null
+    var onSkipNextListener: (() -> Unit)? = null
     var onSkipPreviousListener: (() -> Unit)? = null
     var onToggleShuffleListener: (() -> Unit)? = null
     var onToggleRepeatListener: (() -> Unit)? = null
@@ -243,9 +264,69 @@ class AudioService : Service() {
             e.printStackTrace()
         }
 
+        voiceCommandManager = VoiceCommandManager(this) { command ->
+            when (command) {
+                VoiceCommand.PLAY -> {
+                    if (!playerManager.isPlaying.value && requestAudioFocus()) {
+                        playerManager.resume()
+                        playerManager.currentPlayingSong.value?.let { song ->
+                            updateNotification(song, true)
+                            updateWidgetFromService(song, true, playerManager.playbackProgress.value)
+                        }
+                    }
+                }
+                VoiceCommand.PAUSE -> {
+                    if (playerManager.isPlaying.value) {
+                        playerManager.pause()
+                        playerManager.currentPlayingSong.value?.let { song ->
+                            updateNotification(song, false)
+                            updateWidgetFromService(song, false, playerManager.playbackProgress.value)
+                        }
+                    }
+                }
+                VoiceCommand.SKIP -> {
+                    if (onSkipNextListener != null) {
+                        onSkipNextListener?.invoke()
+                    } else {
+                        onTrackEndedListener?.invoke()
+                    }
+                }
+                VoiceCommand.PREVIOUS -> {
+                    onSkipPreviousListener?.invoke()
+                }
+                VoiceCommand.UNKNOWN -> {}
+            }
+        }
+
         playbackStateJob = CoroutineScope(Dispatchers.Main).launch {
             playerManager.isPlaying.collect { isPlaying ->
                 if (isPlaying) requestAudioFocus()
+
+                // Contextual Gating: listen during playback + 5-minute buffer after pause
+                val sharedPrefs = getSharedPreferences("Mp3PlayerPrefs", MODE_PRIVATE)
+                val isVoiceControlEnabled = sharedPrefs.getBoolean("voice_controls_enabled", false)
+
+                if (isVoiceControlEnabled) {
+                    if (isPlaying) {
+                        // Playing: cancel any pending stop and ensure we're listening
+                        voiceStopJob?.cancel()
+                        voiceStopJob = null
+                        voiceCommandManager.startListening()
+                    } else {
+                        // Paused: keep listening for 5 more minutes so the user can
+                        // say "play" to resume, then shut off to conserve battery.
+                        voiceStopJob?.cancel()
+                        voiceStopJob = launch {
+                            delay(5 * 60 * 1000L) // 5-minute buffer
+                            voiceCommandManager.stopListening()
+                        }
+                    }
+                } else {
+                    voiceStopJob?.cancel()
+                    voiceStopJob = null
+                    voiceCommandManager.stopListening()
+                }
+
                 playerManager.currentPlayingSong.value?.let { song ->
                     updateNotification(song, isPlaying)
                     updateWidgetFromService(song, isPlaying, playerManager.playbackProgress.value)
@@ -297,11 +378,12 @@ class AudioService : Service() {
             }
 
             ACTION_SKIP_NEXT -> {
-                if (playerManager.currentPlayingSong.value != null) {
-                    onTrackEndedListener?.invoke()
-                } else if (restoreAndResumeSavedState()) {
-                    // Restored state, now skip
-                    onTrackEndedListener?.invoke()
+                if (playerManager.currentPlayingSong.value != null || restoreAndResumeSavedState()) {
+                    if (onSkipNextListener != null) {
+                        onSkipNextListener?.invoke()
+                    } else {
+                        onTrackEndedListener?.invoke()
+                    }
                 }
             }
             ACTION_SKIP_PREVIOUS -> {
@@ -365,31 +447,6 @@ class AudioService : Service() {
     }
 
     fun getPlayerManager(): CrossfadePlayerManager = playerManager
-
-    private fun showPlaceholderNotification() {
-        val notificationIntent = Intent(this, MainActivity::class.java)
-        val pendingIntent = PendingIntent.getActivity(
-            this, 0, notificationIntent,
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-
-        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Music")
-            .setSmallIcon(R.drawable.ic_music_note)
-            .setContentIntent(pendingIntent)
-            .build()
-
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
-            } else {
-                startForeground(NOTIFICATION_ID, notification)
-            }
-        } catch (e: Exception) {
-            // Android 12+ (S) / 14+ (U) restriction: Background apps cannot start foreground services.
-            e.printStackTrace()
-        }
-    }
 
     private fun createNotificationChannel() {
         val channel = NotificationChannel(
@@ -605,10 +662,13 @@ class AudioService : Service() {
         }
         playbackStateJob?.cancel()
         progressUpdateJob?.cancel()
+        voiceStopJob?.cancel()
+        voiceCommandManager.release()
         onTrackEndedListener = null
         onTrackStartedListener = null
         onCrossfadeCompletedListener = null
         onPrepareNextSongListener = null
+        onSkipNextListener = null
         onSkipPreviousListener = null
         onToggleShuffleListener = null
         onToggleRepeatListener = null

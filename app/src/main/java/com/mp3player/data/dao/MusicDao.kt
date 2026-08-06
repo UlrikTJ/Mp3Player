@@ -23,11 +23,20 @@ abstract class MusicDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     abstract suspend fun insertSong(song: SongEntity): Long
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    abstract suspend fun insertSongs(songs: List<SongEntity>): List<Long>
+
     @Update
     abstract suspend fun updateSong(song: SongEntity)
 
+    @Update
+    abstract suspend fun updateSongs(songs: List<SongEntity>)
+
     @Query("UPDATE songs SET baseWeight = :weight WHERE id = :songId")
     abstract suspend fun updateSongWeight(songId: Int, weight: Float)
+
+    @Query("UPDATE songs SET baseWeight = 1.0 WHERE id IN (SELECT songId FROM playlist_songs WHERE playlistId = :playlistId)")
+    abstract suspend fun resetPlaylistSongWeights(playlistId: Int)
 
     @Delete
     abstract suspend fun deleteSong(song: SongEntity)

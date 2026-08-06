@@ -22,6 +22,7 @@ class SearchResult(BaseModel):
     uploader: str
     duration: int
     thumbnail: str
+    is_likely_music_video: bool = False
 
 class StreamRequest(BaseModel):
     video_id: str
@@ -50,6 +51,11 @@ def cleanup_files(file_paths: List[str]):
 @app.get("/")
 def read_root():
     return {"status": "running", "ffmpeg_available": shutil.which("ffmpeg") is not None}
+
+def is_music_video_title(title: str) -> bool:
+    lowered = title.lower()
+    keywords = ["official video", "music video", "m/v", "mv", "visualizer", "short film", "directed by", "full video", "lyric video"]
+    return any(kw in lowered for kw in keywords)
 
 @app.get("/search", response_model=List[SearchResult])
 def search_youtube(q: str = Query(..., description="Search query")):
@@ -83,12 +89,16 @@ def search_youtube(q: str = Query(..., description="Search query")):
                     if not thumbnail:
                         thumbnail = f"https://img.youtube.com/vi/{video_id}/0.jpg"
                     
+                    title = entry.get('title') or "Unknown Title"
+                    is_mv = is_music_video_title(title)
+
                     results.append(SearchResult(
                         id=video_id,
-                        title=entry.get('title') or "Unknown Title",
+                        title=title,
                         uploader=entry.get('uploader') or entry.get('channel') or "Unknown Uploader",
                         duration=int(entry.get('duration') or 0),
-                        thumbnail=thumbnail
+                        thumbnail=thumbnail,
+                        is_likely_music_video=is_mv
                     ))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
@@ -177,13 +187,17 @@ def download_mp3(request: DownloadRequest, background_tasks: BackgroundTasks):
     # 2. Download Album Art if available
     temp_cover_path = None
     if resolved_thumb_url:
-        try:
-            temp_cover_path = os.path.join(TEMP_DIR, f"{unique_id}_cover.jpg")
-            with urllib.request.urlopen(resolved_thumb_url, timeout=10) as response, open(temp_cover_path, 'wb') as out_file:
-                shutil.copyfileobj(response, out_file)
-        except Exception as e:
-            print(f"Failed to fetch thumbnail: {e}")
-            temp_cover_path = None
+        parsed_url = urllib.parse.urlparse(resolved_thumb_url)
+        if parsed_url.scheme in ("http", "https"):
+            try:
+                temp_cover_path = os.path.join(TEMP_DIR, f"{unique_id}_cover.jpg")
+                with urllib.request.urlopen(resolved_thumb_url, timeout=10) as response, open(temp_cover_path, 'wb') as out_file:
+                    shutil.copyfileobj(response, out_file)
+            except Exception as e:
+                print(f"Failed to fetch thumbnail: {e}")
+                temp_cover_path = None
+        else:
+            print(f"Invalid thumbnail URL scheme: {parsed_url.scheme}")
 
     # 3. Add ID3 Metadata
     try:

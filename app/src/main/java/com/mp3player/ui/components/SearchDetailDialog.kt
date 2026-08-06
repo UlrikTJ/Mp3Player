@@ -36,6 +36,8 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.foundation.shape.CircleShape
@@ -45,6 +47,7 @@ import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Pause
@@ -62,6 +65,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
@@ -135,7 +140,9 @@ import com.mp3player.ui.screens.*
 fun SearchDetailDialog(
     track: SearchTrackDto,
     viewModel: MusicViewModel,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    actionButtonText: String? = null,
+    onActionClick: (() -> Unit)? = null
 ) {
     val downloads by viewModel.downloadProgress.collectAsState()
     val localSongs by viewModel.allSongs.collectAsState()
@@ -143,9 +150,13 @@ fun SearchDetailDialog(
     val playerManager by viewModel.playerManager.collectAsState()
     val currentSong = playerManager?.currentPlayingSong?.collectAsState(null)?.value
     val isPlaying = playerManager?.isPlaying?.collectAsState(false)?.value ?: false
-    val isThisTrackPlaying = currentSong?.youtubeVideoId == track.id
-    
-    val isDownloaded = localSongs.any { it.youtubeVideoId == track.id }
+    val matchingLibrarySong = localSongs.find { 
+        (it.youtubeVideoId != null && it.youtubeVideoId == track.id) ||
+        (it.title.equals(track.title, ignoreCase = true) && it.artist.equals(track.uploader, ignoreCase = true)) ||
+        (it.title.contains(track.title, ignoreCase = true))
+    }
+    val isThisTrackPlaying = currentSong?.youtubeVideoId == track.id || (matchingLibrarySong != null && currentSong?.id == matchingLibrarySong.id)
+    val isDownloaded = matchingLibrarySong != null
     val isDownloading = downloads.containsKey(track.id)
     val downloadPercent = downloads[track.id] ?: 0f
 
@@ -164,9 +175,9 @@ fun SearchDetailDialog(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        .padding(24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.SpaceBetween
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 24.dp, vertical = 16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                 // Top bar
                 Row(
@@ -181,26 +192,26 @@ fun SearchDetailDialog(
                     Box(modifier = Modifier.size(48.dp))
                 }
 
-                // Artwork (Centered)
-                Spacer(modifier = Modifier.height(16.dp))
+                // Artwork (Centered, scale dynamically)
+                Spacer(modifier = Modifier.height(12.dp))
                 if (track.thumbnail.isNotEmpty()) {
                     AsyncImage(
                         model = track.thumbnail,
                         contentDescription = "Thumbnail",
                         modifier = Modifier
-                            .size(300.dp)
+                            .size(220.dp)
                             .clip(RoundedCornerShape(16.dp)),
                         contentScale = ContentScale.Crop
                     )
                 } else {
                     Box(
                         modifier = Modifier
-                            .size(300.dp)
+                            .size(220.dp)
                             .clip(RoundedCornerShape(16.dp))
                             .background(Color.DarkGray),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(80.dp), tint = Color.LightGray)
+                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(64.dp), tint = Color.LightGray)
                     }
                 }
 
@@ -208,16 +219,23 @@ fun SearchDetailDialog(
 
                 // Song Title & Artist info
                 Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    val titleFontSize = when {
+                        track.title.length > 50 -> 16.sp
+                        track.title.length > 30 -> 19.sp
+                        else -> 23.sp
+                    }
                     Text(
-                        track.title, 
+                        text = track.title, 
                         color = Color.White, 
-                        fontSize = 24.sp, 
+                        fontSize = titleFontSize, 
                         fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, 
-                        maxLines = 2,
-                        textAlign = TextAlign.Center
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.basicMarquee()
                     )
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text(track.uploader, color = Color.Gray, fontSize = 16.sp, maxLines = 1, textAlign = TextAlign.Center)
+                    Text(track.uploader, color = Color.Gray, fontSize = 15.sp, maxLines = 1, textAlign = TextAlign.Center)
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -274,7 +292,92 @@ fun SearchDetailDialog(
                         )
                     }
 
-                    if (!isDownloaded) {
+                    if (actionButtonText != null && onActionClick != null) {
+                        Button(
+                            onClick = onActionClick,
+                            modifier = Modifier.fillMaxWidth().height(50.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                        ) {
+                            Text(
+                                text = actionButtonText,
+                                color = Color.Black,
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    var showManualEditDialog by remember { mutableStateOf(false) }
+                    var manualTitleInput by remember { mutableStateOf("") }
+
+                    if (isDownloaded) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedButton(
+                                onClick = {
+                                    if (matchingLibrarySong != null) {
+                                        viewModel.cleanSongTitle(matchingLibrarySong)
+                                    }
+                                },
+                                modifier = Modifier.weight(1f).height(50.dp),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.AutoFixHigh,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Auto-Clean Title",
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            IconButton(
+                                onClick = {
+                                    if (matchingLibrarySong != null) {
+                                        manualTitleInput = matchingLibrarySong.title
+                                        showManualEditDialog = true
+                                    }
+                                },
+                                modifier = Modifier
+                                    .size(50.dp)
+                                    .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp))
+                            ) {
+                                Icon(Icons.Default.Edit, contentDescription = "Manual Edit", tint = MaterialTheme.colorScheme.primary)
+                            }
+                        }
+
+                        if (showManualEditDialog && matchingLibrarySong != null) {
+                            AlertDialog(
+                                onDismissRequest = { showManualEditDialog = false },
+                                title = { Text("Edit Song Title") },
+                                text = {
+                                    OutlinedTextField(
+                                        value = manualTitleInput,
+                                        onValueChange = { manualTitleInput = it },
+                                        label = { Text("Song Title") },
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                },
+                                confirmButton = {
+                                    Button(
+                                        onClick = {
+                                            viewModel.updateSongTitle(matchingLibrarySong, manualTitleInput)
+                                            showManualEditDialog = false
+                                        }
+                                    ) { Text("Save") }
+                                },
+                                dismissButton = {
+                                    TextButton(onClick = { showManualEditDialog = false }) { Text("Cancel") }
+                                }
+                            )
+                        }
+                    } else {
                         OutlinedButton(
                             onClick = { viewModel.downloadYouTubeTrack(track) },
                             modifier = Modifier.fillMaxWidth().height(50.dp),
@@ -326,10 +429,6 @@ fun SearchDetailDialog(
                             }
                         }
                     }
-                }
-
-                if (currentSong != null) {
-                    MiniPlayer(song = currentSong, viewModel = viewModel)
                 }
             }
         }

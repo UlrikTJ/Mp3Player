@@ -46,6 +46,9 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+        jniLibs {
+            useLegacyPackaging = false
+        }
     }
 }
 
@@ -91,6 +94,12 @@ dependencies {
 
     // Coil Image Loading
     implementation(libs.coil.compose)
+
+    // 16 KB Page Aligned Graphics Path
+    implementation(libs.androidx.graphics.path)
+
+    // LiteRT for offline keyword spotting
+    implementation(libs.litert)
 
     // Testing
     testImplementation(libs.junit)

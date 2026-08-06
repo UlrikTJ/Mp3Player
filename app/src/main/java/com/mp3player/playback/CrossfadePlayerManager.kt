@@ -169,10 +169,6 @@ class CrossfadePlayerManager(
         }
 
         val file = java.io.File(song.filePath)
-        if (song.id > 0 && !file.exists()) {
-            onTrackEnded()
-            return
-        }
 
         currentSong = song
         cachedDurationMs = 0L // Reset cache for new song
@@ -271,9 +267,6 @@ class CrossfadePlayerManager(
 
     private fun startCrossfade() {
         val incomingSong = nextSong ?: return
-        
-        val file = java.io.File(incomingSong.filePath)
-        if (incomingSong.id > 0 && !file.exists()) return
 
         isCrossfading = true
         _isCrossfadingFlow.value = true

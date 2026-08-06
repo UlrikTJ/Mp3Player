@@ -84,7 +84,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import coil.compose.AsyncImage
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import java.io.File
 import androidx.compose.material.icons.filled.Delete
@@ -176,6 +175,9 @@ class MainActivity : ComponentActivity() {
 
             boundService.onTrackEndedListener = {
                 viewModel.onTrackEndedEvent()
+            }
+            boundService.onSkipNextListener = {
+                viewModel.playNext()
             }
             boundService.onCrossfadeCompletedListener = { song ->
                 viewModel.onCrossfadeCompletedEvent(song)

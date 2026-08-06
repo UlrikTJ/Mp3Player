@@ -22,6 +22,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.material.icons.filled.DragHandle
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.zIndex
 import androidx.compose.animation.core.animateFloatAsState
@@ -217,6 +219,97 @@ fun SettingsScreen(viewModel: MusicViewModel, onOpenLibrary: () -> Unit = {}) {
                 Text("Boosts landing target tracks", color = Color.Gray, fontSize = 12.sp)
             }
             Switch(checked = useKeeperBonus, onCheckedChange = { viewModel.updateKeeperBonus(it) })
+        }
+
+        HorizontalDivider()
+
+        val context = LocalContext.current
+        val prefs = remember { context.getSharedPreferences("Mp3PlayerPrefs", Context.MODE_PRIVATE) }
+        var voiceControlsEnabled by remember { mutableStateOf(prefs.getBoolean("voice_controls_enabled", false)) }
+
+        val permissionLauncher = rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.RequestPermission()
+        ) { isGranted ->
+            if (isGranted) {
+                voiceControlsEnabled = true
+                prefs.edit().putBoolean("voice_controls_enabled", true).apply()
+                Toast.makeText(context, "Hands-free voice controls enabled", Toast.LENGTH_SHORT).show()
+            } else {
+                voiceControlsEnabled = false
+                prefs.edit().putBoolean("voice_controls_enabled", false).apply()
+                Toast.makeText(context, "Microphone permission required for Voice Controls", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        var selectedEngineMode by remember {
+            mutableStateOf(prefs.getString("voice_engine_mode", "SPEECH_RECOGNIZER") ?: "SPEECH_RECOGNIZER")
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                Text("Hands-Free Voice Controls", color = Color.White)
+                val subText = if (selectedEngineMode == "LITERT_KEYWORD_SPOTTING") {
+                    "LiteRT KWS Mode: Say 'go' (play), 'stop' (pause), 'right' (skip), 'left' (previous)"
+                } else {
+                    "SpeechRecognizer Mode: Say 'play', 'pause', 'skip', or 'previous'"
+                }
+                Text(subText, color = Color.Gray, fontSize = 12.sp)
+            }
+            Switch(
+                checked = voiceControlsEnabled,
+                onCheckedChange = { enabled ->
+                    if (enabled) {
+                        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                            voiceControlsEnabled = true
+                            prefs.edit().putBoolean("voice_controls_enabled", true).apply()
+                        } else {
+                            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                        }
+                    } else {
+                        voiceControlsEnabled = false
+                        prefs.edit().putBoolean("voice_controls_enabled", false).apply()
+                    }
+                }
+            )
+        }
+
+        if (voiceControlsEnabled) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text("Voice Recognition Engine", color = Color.White, fontSize = 14.sp)
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                FilterChip(
+                    selected = selectedEngineMode == "SPEECH_RECOGNIZER",
+                    onClick = {
+                        selectedEngineMode = "SPEECH_RECOGNIZER"
+                        prefs.edit().putString("voice_engine_mode", "SPEECH_RECOGNIZER").apply()
+                    },
+                    label = { Text("Android Speech API") },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = MaterialTheme.colorScheme.primary,
+                        selectedLabelColor = Color.White
+                    )
+                )
+                FilterChip(
+                    selected = selectedEngineMode == "LITERT_KEYWORD_SPOTTING",
+                    onClick = {
+                        selectedEngineMode = "LITERT_KEYWORD_SPOTTING"
+                        prefs.edit().putString("voice_engine_mode", "LITERT_KEYWORD_SPOTTING").apply()
+                    },
+                    label = { Text("Offline LiteRT Model") },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = MaterialTheme.colorScheme.primary,
+                        selectedLabelColor = Color.White
+                    )
+                )
+            }
         }
 
         HorizontalDivider()

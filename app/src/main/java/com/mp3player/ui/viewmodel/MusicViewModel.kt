@@ -129,14 +129,36 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val _searchResults = MutableStateFlow<List<SearchTrackDto>>(emptyList())
     val searchResults: StateFlow<List<SearchTrackDto>> = _searchResults
 
-    private val _isSearching = MutableStateFlow(false)
-    val isSearching: StateFlow<Boolean> = _isSearching
+    private val _searchError = MutableStateFlow<String?>(null)
+    val searchError: StateFlow<String?> = _searchError
+
+    private val _replaceAllProgress = MutableStateFlow<Pair<Int, Int>?>(null) // current, total
+    val replaceAllProgress: StateFlow<Pair<Int, Int>?> = _replaceAllProgress
 
     private val _downloadProgress = MutableStateFlow<Map<String, Float>>(emptyMap()) // videoId -> progress percentage
     val downloadProgress: StateFlow<Map<String, Float>> = _downloadProgress
 
     private val _importProgress = MutableStateFlow<ImportBatchProgress?>(null)
     val importProgress: StateFlow<ImportBatchProgress?> = _importProgress
+
+    // Music Video Scanner & Replacement States
+    data class MusicVideoScanItem(
+        val song: SongEntity,
+        val isLikelyMusicVideo: Boolean,
+        val reason: String
+    )
+
+    private val _musicVideoScanResults = MutableStateFlow<List<MusicVideoScanItem>>(emptyList())
+    val musicVideoScanResults: StateFlow<List<MusicVideoScanItem>> = _musicVideoScanResults
+
+    private val _isScanningMusicVideos = MutableStateFlow(false)
+    val isScanningMusicVideos: StateFlow<Boolean> = _isScanningMusicVideos
+
+    private val _replacementSearchResults = MutableStateFlow<Map<Int, List<SearchTrackDto>>>(emptyMap()) // songId -> results
+    val replacementSearchResults: StateFlow<Map<Int, List<SearchTrackDto>>> = _replacementSearchResults
+
+    private val _isReplacingAudio = MutableStateFlow<Map<Int, Boolean>>(emptyMap()) // songId -> loading state
+    val isReplacingAudio: StateFlow<Map<Int, Boolean>> = _isReplacingAudio
 
     // History and Queue
     private val _playbackHistory = MutableStateFlow<List<Int>>(emptyList())
@@ -452,11 +474,24 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private val _isSearching = MutableStateFlow(false)
+    val isSearching: StateFlow<Boolean> = _isSearching
+
     // --- Search & Streaming ---
     fun searchYouTube(query: String) {
         _suggestions.value = emptyList()
+        _searchError.value = null
         viewModelScope.launch {
-            val service = apiService ?: return@launch
+            var service = apiService
+            if (service == null) {
+                val ip = sharedPrefs.getString("server_ip", "100.73.254.38") ?: "100.73.254.38"
+                updateServerIp(ip)
+                service = apiService
+            }
+            if (service == null) {
+                _searchError.value = "Connection to server couldn't be established. Check Server IP in settings."
+                return@launch
+            }
             _isSearching.value = true
             try {
                 val results = withContext(Dispatchers.IO) {
@@ -469,6 +504,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
+                _searchError.value = "Connection to server failed: ${e.localizedMessage ?: "Timeout"}"
             } finally {
                 _isSearching.value = false
             }
@@ -499,10 +535,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun playOrStreamSearchTrack(dto: SearchTrackDto) {
-        val existing = allSongs.value.find { it.youtubeVideoId == dto.id }
+        val existing = allSongs.value.find { 
+            (dto.id.isNotEmpty() && it.youtubeVideoId == dto.id) ||
+            (it.title.equals(dto.title, ignoreCase = true) && it.artist.equals(dto.uploader, ignoreCase = true)) ||
+            (it.title.contains(dto.title, ignoreCase = true))
+        }
         if (existing != null) {
             playSongFromLibrary(existing)
-        } else {
+        } else if (dto.id.isNotEmpty()) {
             streamYouTubeTrack(dto)
         }
     }
@@ -937,7 +977,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 _downloadProgress.update { it + (videoId to 0.50f) }
 
                 // Save file locally
-                val localSong = saveTrackToLocalStorage(dto.title, dto.uploader, dto.thumbnail, responseBody.byteStream())
+                val localSong = saveTrackToLocalStorage(dto.title, dto.uploader, dto.thumbnail, responseBody.byteStream(), youtubeVideoId = videoId)
                 
                 if (localSong != null) {
                     // Save to Room DB
@@ -953,6 +993,19 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 _downloadProgress.update { it.toMutableMap().apply { remove(videoId) } } // error
                 withContext(Dispatchers.Main) {
                     android.widget.Toast.makeText(getApplication(), "Download failed: ${e.localizedMessage}", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    fun updateSongTitle(song: SongEntity, newTitle: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val trimmed = newTitle.trim()
+            if (trimmed.isNotBlank() && trimmed != song.title) {
+                val updated = song.copy(title = trimmed)
+                musicDao.updateSong(updated)
+                _musicVideoScanResults.value = _musicVideoScanResults.value.map {
+                    if (it.song.id == song.id) it.copy(song = updated) else it
                 }
             }
         }
@@ -1058,7 +1111,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         artist: String,
         thumbnailUrl: String,
         inputStream: InputStream,
-        subFolder: String? = null
+        subFolder: String? = null,
+        youtubeVideoId: String? = null
     ): SongEntity? = withContext(Dispatchers.IO) {
         try {
             val context = getApplication<Application>().applicationContext
@@ -1067,7 +1121,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 File(baseMusicDir, subFolder).apply { if (!exists()) mkdirs() }
             } else baseMusicDir
             
-            val safeName = title.replace(Regex("[^a-zA-Z0-9\\-_ ]"), "").trim().replace(" ", "_")
+            val cleanedTitle = performTitleCleaning(title, artist)
+            val safeName = cleanedTitle.replace(Regex("[^a-zA-Z0-9\\-_ ]"), "").trim().replace(" ", "_")
             val mp3File = File(targetDir, "${safeName}_${System.currentTimeMillis()}.mp3")
             
             // Write stream to file
@@ -1083,14 +1138,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             val durationMs = if (extractedDur > 0) extractedDur else 0L
             
             SongEntity(
-                title = title,
+                title = if (cleanedTitle.isNotBlank()) cleanedTitle else title,
                 artist = artist,
                 album = subFolder ?: "YouTube Downloads",
                 filePath = mp3File.absolutePath,
                 artworkPath = thumbnailUrl, // Store thumbnail URL or path
                 durationMs = durationMs,
                 source = "LOCAL",
-                youtubeVideoId = null
+                youtubeVideoId = youtubeVideoId
             )
         } catch (e: Exception) {
             e.printStackTrace()
@@ -1229,10 +1284,19 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     
                     if (service != null) {
+                        val liveFilterRegex = Regex("(?i)\\b(live|live\\s+performance|live\\s+at|live\\s+in|concert|tour)\\b")
+                        val cleanQuery = query.replace(Regex("(?i)\\.(mp3|flac|wav|m4a)$"), "")
+                            .replace(Regex("(?i)(official video|music video|m/v|mv|visualizer|live|official audio)"), "")
+                            .trim()
                         val searchResults = withContext(Dispatchers.IO) {
-                            try { service.search(query) } catch (e: Exception) { emptyList() }
+                            try { service.search("$cleanQuery Official Audio".trim()) } catch (e: Exception) { emptyList() }
                         }
-                        val topResult = searchResults.firstOrNull()
+                        val studioResults = searchResults.filter { !it.is_likely_music_video && !liveFilterRegex.containsMatchIn(it.title) }
+                        val topResult = studioResults.firstOrNull() 
+                            ?: searchResults.firstOrNull { !it.is_likely_music_video } 
+                            ?: searchResults.firstOrNull { !liveFilterRegex.containsMatchIn(it.title) }
+                            ?: searchResults.firstOrNull()
+
                         if (topResult != null) {
                             val videoId = topResult.id
                             val existingSong = allSongs.value.find { it.youtubeVideoId == videoId || (it.title == topResult.title && it.artist == topResult.uploader) }
@@ -1258,7 +1322,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                                         artist = topResult.uploader,
                                         thumbnailUrl = topResult.thumbnail,
                                         inputStream = responseBody.byteStream(),
-                                        subFolder = safeFolder
+                                        subFolder = safeFolder,
+                                        youtubeVideoId = videoId
                                     )
                                     if (localSong != null) {
                                         withContext(Dispatchers.IO) {
@@ -1453,6 +1518,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             
             try {
                 val songsToFetch = allSongs.value.filter { it.artworkPath.isNullOrBlank() && !failedArtworkSongIds.contains(it.id) }
+                val updatedSongs = mutableListOf<SongEntity>()
                 for (song in songsToFetch) {
                     try {
                         val cleanTitle = song.title.replace(Regex("(?i)\\.(mp3|flac|wav|m4a)$"), "")
@@ -1469,7 +1535,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                             val bestMatch = results.first()
                             if (bestMatch.thumbnail.isNotEmpty()) {
                                 val updatedSong = song.copy(artworkPath = bestMatch.thumbnail)
-                                musicDao.updateSong(updatedSong)
+                                updatedSongs.add(updatedSong)
                             } else {
                                 failedArtworkSongIds.add(song.id)
                             }
@@ -1481,6 +1547,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                         e.printStackTrace()
                         failedArtworkSongIds.add(song.id)
                     }
+                }
+                if (updatedSongs.isNotEmpty()) {
+                    musicDao.updateSongs(updatedSongs)
                 }
             } finally {
                 _isFetchingArtwork.value = false
@@ -1704,10 +1773,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun resetPlaylistStats(playlistId: Int) {
         viewModelScope.launch(Dispatchers.IO) {
-            val songs = musicDao.getSongsForPlaylist(playlistId)
-            for (song in songs) {
-                musicDao.updateSongWeight(song.id, 1.0f)
-            }
+            musicDao.resetPlaylistSongWeights(playlistId)
             musicDao.deletePlaybackEventsForPlaylist(playlistId)
             musicDao.deleteKeeperEventsForPlaylist(playlistId)
         }
@@ -1748,6 +1814,245 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 PlaylistSongCrossRef(playlistId = playlistId, songId = song.id, position = posIndex + 1)
             }
             musicDao.updatePlaylistOrder(playlistId, crossRefs)
+        }
+    }
+
+    fun scanPlaylistForMusicVideos(playlistId: Int?) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _isScanningMusicVideos.value = true
+            try {
+                val songsToScan = if (playlistId != null) {
+                    musicDao.getSongsForPlaylist(playlistId)
+                } else {
+                    allSongs.value
+                }
+
+                val mvKeywords = listOf(
+                    "official video", "music video", "m/v", "mv", "visualizer", "short film", 
+                    "directed by", "full video", "lyric video", "live from", "live session", 
+                    "live at", "live performance", "studio session", "in studio"
+                )
+                val results = mutableListOf<MusicVideoScanItem>()
+
+                for (song in songsToScan) {
+                    val titleLower = song.title.lowercase()
+                    val matchedKeyword = mvKeywords.firstOrNull { titleLower.contains(it) }
+                    
+                    if (matchedKeyword != null) {
+                        results.add(MusicVideoScanItem(song, true, "Title contains '$matchedKeyword'"))
+                    } else {
+                        results.add(MusicVideoScanItem(song, false, "Audio release"))
+                    }
+                }
+                _musicVideoScanResults.value = results
+            } finally {
+                _isScanningMusicVideos.value = false
+            }
+        }
+    }
+
+    fun findAudioReplacements(song: SongEntity) {
+        viewModelScope.launch(Dispatchers.IO) {
+            var service = apiService
+            if (service == null) {
+                val ip = sharedPrefs.getString("server_ip", "100.73.254.38") ?: "100.73.254.38"
+                updateServerIp(ip)
+                service = apiService
+            }
+            if (service == null) return@launch
+
+            val cleanTitle = song.title.replace(Regex("(?i)\\.(mp3|flac|wav|m4a)$"), "")
+                .replace(Regex("(?i)(official video|music video|m/v|mv|visualizer)"), "")
+                .trim()
+            val cleanArtist = if (song.artist != "Unknown Artist" && song.artist != "Downloaded Track") song.artist else ""
+            val query = "$cleanArtist $cleanTitle Official Audio".trim()
+
+            val liveFilterRegex = Regex("(?i)\\b(live|live\\s+performance|live\\s+at|live\\s+in|concert|tour)\\b")
+            try {
+                val results = service.search(query)
+                val nonLiveResults = results.filter { !liveFilterRegex.containsMatchIn(it.title) }
+                val finalCandidates = if (nonLiveResults.isNotEmpty()) nonLiveResults else results
+                _replacementSearchResults.value = _replacementSearchResults.value + (song.id to finalCandidates)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    fun replaceSongAudio(oldSong: SongEntity, replacement: SearchTrackDto) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _isReplacingAudio.value = _isReplacingAudio.value + (oldSong.id to true)
+            try {
+                var service = apiService
+                if (service == null) {
+                    val ip = sharedPrefs.getString("server_ip", "100.73.254.38") ?: "100.73.254.38"
+                    updateServerIp(ip)
+                    service = apiService
+                }
+                if (service == null) return@launch
+
+                val responseBody = service.downloadTrack(
+                    DownloadRequestDto(
+                        video_id = replacement.id,
+                        title = replacement.title,
+                        artist = replacement.uploader,
+                        thumbnail_url = replacement.thumbnail
+                    )
+                )
+
+                val targetFile = File(oldSong.filePath)
+                val tempFile = File(targetFile.parentFile, "${targetFile.nameWithoutExtension}_replacement.mp3")
+
+                responseBody.byteStream().use { input ->
+                    FileOutputStream(tempFile).use { output ->
+                        input.copyTo(output)
+                    }
+                }
+
+                if (tempFile.exists() && tempFile.length() > 0) {
+                    if (targetFile.exists()) {
+                        targetFile.delete()
+                    }
+                    tempFile.renameTo(targetFile)
+
+                    val updatedSong = oldSong.copy(
+                        title = replacement.title,
+                        artist = replacement.uploader,
+                        durationMs = replacement.duration * 1000L,
+                        youtubeVideoId = replacement.id,
+                        artworkPath = replacement.thumbnail.ifBlank { oldSong.artworkPath }
+                    )
+
+                    musicDao.updateSong(updatedSong)
+
+                    // Re-scan playlist to update status
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            } finally {
+                _isReplacingAudio.value = _isReplacingAudio.value - oldSong.id
+            }
+        }
+    }
+
+    fun replaceAllMusicVideoAudios() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val flaggedItems = _musicVideoScanResults.value.filter { it.isLikelyMusicVideo }
+            if (flaggedItems.isEmpty()) return@launch
+
+            _replaceAllProgress.value = Pair(0, flaggedItems.size)
+            try {
+                for ((index, item) in flaggedItems.withIndex()) {
+                    _replaceAllProgress.value = Pair(index + 1, flaggedItems.size)
+                    var service = apiService
+                    if (service == null) {
+                        val ip = sharedPrefs.getString("server_ip", "100.73.254.38") ?: "100.73.254.38"
+                        updateServerIp(ip)
+                        service = apiService
+                    }
+                    if (service == null) continue
+
+                    val cleanTitle = item.song.title.replace(Regex("(?i)\\.(mp3|flac|wav|m4a)$"), "")
+                        .replace(Regex("(?i)(official video|music video|m/v|mv|visualizer)"), "")
+                        .trim()
+                    val cleanArtist = if (item.song.artist != "Unknown Artist" && item.song.artist != "Downloaded Track") item.song.artist else ""
+                    val query = "$cleanArtist $cleanTitle Official Audio".trim()
+
+                    val liveFilterRegex = Regex("(?i)\\b(live|live\\s+performance|live\\s+at|live\\s+in|concert|tour)\\b")
+                    try {
+                        val results = service.search(query)
+                        val studioResults = results.filter { !it.is_likely_music_video && !liveFilterRegex.containsMatchIn(it.title) }
+                        val bestMatch = studioResults.firstOrNull() 
+                            ?: results.firstOrNull { !it.is_likely_music_video } 
+                            ?: results.firstOrNull { !liveFilterRegex.containsMatchIn(it.title) }
+                            ?: results.firstOrNull()
+
+                        if (bestMatch != null) {
+                            replaceSongAudio(item.song, bestMatch)
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                }
+            } finally {
+                _replaceAllProgress.value = null
+            }
+        }
+    }
+
+    fun performTitleCleaning(title: String, artist: String): String {
+        var cleaned = title.replace(Regex("(?i)\\.(mp3|flac|wav|m4a)$"), "")
+
+        val artistPrefixRegex = if (artist.isNotBlank() && artist != "Unknown Artist" && artist != "Downloaded Track") {
+            Regex("(?i)^" + Regex.escape(artist) + "\\s*[-:_~|]\\s*")
+        } else null
+
+        if (artistPrefixRegex != null) {
+            cleaned = cleaned.replace(artistPrefixRegex, "")
+        }
+
+        // Remove any bracket contents (parentheses, square brackets, curly braces) containing video/live/lyric/audio/performance/studio keywords
+        val bracketKeywords = "(official\\s*video|music\\s*video|official\\s*audio|lyric\\s*video|official\\s*lyric\\s*video|official|lyrics|lyric|audio|video|unreleased|hd|4k|m/v|mv|visualizer|short\\s*film|live\\s*from\\s*the\\s*studio|live\\s*from|live\\s*session|live\\s*at|live\\s*in|live\\s*performance|live|studio\\s*session|performance)"
+        cleaned = cleaned.replace(Regex("(?i)\\([^)]*" + bracketKeywords + "[^)]*\\)"), "")
+        cleaned = cleaned.replace(Regex("(?i)\\[[^\\]]*" + bracketKeywords + "[^\\]]*\\]"), "")
+        cleaned = cleaned.replace(Regex("(?i)\\{[^}]*" + bracketKeywords + "[^}]*\\}"), "")
+        cleaned = cleaned.replace(Regex("(?i)\\b" + bracketKeywords + "\\b"), "")
+
+        // Strip leftover empty brackets (), [], {}
+        cleaned = cleaned.replace(Regex("\\(\\s*\\)"), "")
+        cleaned = cleaned.replace(Regex("\\[\\s*\\]"), "")
+        cleaned = cleaned.replace(Regex("\\{\\s*\\}"), "")
+        cleaned = cleaned.replace(Regex("^[0-9]+\\s*[-._]?\\s*"), "") // strip track numbers like 01 - 
+
+        // Strip remaining "Artist - Title" pattern if present
+        if (cleaned.contains(" - ")) {
+            val parts = cleaned.split(" - ", limit = 2)
+            if (parts.size == 2 && parts[0].length < 30) {
+                cleaned = parts[1]
+            }
+        }
+
+        return cleaned.replace(Regex("\\s+"), " ").trim()
+    }
+
+    fun cleanSongTitle(song: SongEntity) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val cleaned = performTitleCleaning(song.title, song.artist)
+
+            if (cleaned != song.title && cleaned.isNotBlank()) {
+                val updatedSong = song.copy(title = cleaned)
+                musicDao.updateSong(updatedSong)
+                
+                // Update scan results UI
+                _musicVideoScanResults.value = _musicVideoScanResults.value.map {
+                    if (it.song.id == song.id) it.copy(song = updatedSong) else it
+                }
+            }
+        }
+    }
+
+    fun cleanPlaylistSongTitles(playlistId: Int?) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val songsToClean = if (playlistId != null) {
+                musicDao.getSongsForPlaylist(playlistId)
+            } else {
+                allSongs.value
+            }
+
+            val updatedList = mutableListOf<SongEntity>()
+            for (song in songsToClean) {
+                val cleaned = performTitleCleaning(song.title, song.artist)
+
+                if (cleaned != song.title && cleaned.isNotBlank()) {
+                    updatedList.add(song.copy(title = cleaned))
+                }
+            }
+
+            if (updatedList.isNotEmpty()) {
+                musicDao.updateSongs(updatedList)
+                // Re-scan playlist
+                scanPlaylistForMusicVideos(playlistId)
+            }
         }
     }
 }
