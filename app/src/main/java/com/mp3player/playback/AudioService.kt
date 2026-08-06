@@ -296,6 +296,20 @@ class AudioService : Service() {
                     VoiceCommand.PREVIOUS -> {
                         onSkipPreviousListener?.invoke()
                     }
+                    VoiceCommand.VOLUME_UP -> {
+                        audioManager?.adjustStreamVolume(
+                            AudioManager.STREAM_MUSIC,
+                            AudioManager.ADJUST_RAISE,
+                            AudioManager.FLAG_SHOW_UI
+                        )
+                    }
+                    VoiceCommand.VOLUME_DOWN -> {
+                        audioManager?.adjustStreamVolume(
+                            AudioManager.STREAM_MUSIC,
+                            AudioManager.ADJUST_LOWER,
+                            AudioManager.FLAG_SHOW_UI
+                        )
+                    }
                     VoiceCommand.UNKNOWN -> {}
                 }
             }
