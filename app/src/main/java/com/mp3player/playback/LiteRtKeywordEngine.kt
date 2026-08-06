@@ -233,7 +233,7 @@ class LiteRtKeywordEngine(
                     val label = labels[maxIdx]
                     val requiredThreshold = when (label) {
                         "go", "stop" -> 0.45f // Lower threshold so "go" and "stop" trigger much more easily
-                        "right", "left", "up", "down" -> 0.55f
+                        "right", "left" -> 0.55f
                         else -> CONFIDENCE_THRESHOLD
                     }
 
@@ -243,8 +243,6 @@ class LiteRtKeywordEngine(
                             "stop" -> VoiceCommand.PAUSE
                             "right" -> VoiceCommand.SKIP
                             "left" -> VoiceCommand.PREVIOUS
-                            "up" -> VoiceCommand.VOLUME_UP
-                            "down" -> VoiceCommand.VOLUME_DOWN
                             else -> VoiceCommand.UNKNOWN
                         }
 

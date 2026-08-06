@@ -19,14 +19,12 @@ enum class VoiceCommand {
     PAUSE,
     SKIP,
     PREVIOUS,
-    VOLUME_UP,
-    VOLUME_DOWN,
     UNKNOWN
 }
 
 enum class VoiceEngineMode {
-    SPEECH_RECOGNIZER, // Native Android speech-to-text ("play", "pause", "skip", "previous", "louder", "quieter")
-    LITERT_KEYWORD_SPOTTING // Offline TFLite / LiteRT model ("go", "stop", "right", "left", "up", "down")
+    SPEECH_RECOGNIZER, // Native Android speech-to-text ("play", "pause", "skip", "previous")
+    LITERT_KEYWORD_SPOTTING // Offline TFLite / LiteRT model ("go", "stop", "right", "left")
 }
 
 /**
@@ -63,11 +61,6 @@ class VoiceCommandManager(
         "stop" to VoiceCommand.PAUSE,
         "previous" to VoiceCommand.PREVIOUS,
         "back" to VoiceCommand.PREVIOUS,
-        "up" to VoiceCommand.VOLUME_UP,
-        "louder" to VoiceCommand.VOLUME_UP,
-        "down" to VoiceCommand.VOLUME_DOWN,
-        "quieter" to VoiceCommand.VOLUME_DOWN,
-        "softer" to VoiceCommand.VOLUME_DOWN,
     )
 
     init {

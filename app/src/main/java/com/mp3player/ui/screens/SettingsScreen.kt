@@ -253,9 +253,9 @@ fun SettingsScreen(viewModel: MusicViewModel, onOpenLibrary: () -> Unit = {}) {
             Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                 Text("Hands-Free Voice Controls", color = Color.White)
                 val subText = if (selectedEngineMode == "LITERT_KEYWORD_SPOTTING") {
-                    "LiteRT KWS Mode: Say 'go' (play), 'stop' (pause), 'right' (skip), 'left' (prev), 'up' / 'down' (vol)"
+                    "LiteRT KWS Mode: Say 'go' (play), 'stop' (pause), 'right' (skip), 'left' (previous)"
                 } else {
-                    "SpeechRecognizer Mode: Say 'play', 'pause', 'skip', 'previous', 'louder', 'quieter'"
+                    "SpeechRecognizer Mode: Say 'play', 'pause', 'skip', or 'previous'"
                 }
                 Text(subText, color = Color.Gray, fontSize = 12.sp)
             }
