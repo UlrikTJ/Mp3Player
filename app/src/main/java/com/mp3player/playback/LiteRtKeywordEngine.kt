@@ -220,25 +220,34 @@ class LiteRtKeywordEngine(
                 interp.runForMultipleInputsOutputs(inputs, outputs)
                 val probabilities = outputScores[0]
 
-                var maxIdx = -1
+                var bestLabel: String? = null
                 var maxProb = 0.0f
+
+                // Evaluate ONLY our 4 target commands so unused model outputs (up, down, yes, no, on, off) can NEVER block detection
                 for (i in probabilities.indices) {
-                    if (probabilities[i] > maxProb) {
-                        maxProb = probabilities[i]
-                        maxIdx = i
+                    if (i < labels.size) {
+                        val label = labels[i]
+                        if (label == "go" || label == "stop" || label == "right" || label == "left") {
+                            if (probabilities[i] > maxProb) {
+                                maxProb = probabilities[i]
+                                bestLabel = label
+                            }
+                        }
                     }
                 }
 
-                if (maxIdx in labels.indices) {
-                    val label = labels[maxIdx]
-                    val requiredThreshold = when (label) {
-                        "go", "stop" -> 0.45f // Lower threshold so "go" and "stop" trigger much more easily
-                        "right", "left" -> 0.55f
+                if (bestLabel != null) {
+                    val requiredThreshold = when (bestLabel) {
+                        "go", "stop" -> 0.40f // Lower threshold for fast triggers
+                        "right", "left" -> 0.50f
                         else -> CONFIDENCE_THRESHOLD
                     }
 
-                    if (maxProb >= requiredThreshold) {
-                        val command = when (label) {
+                    val silenceIdx = labels.indexOf("_silence_")
+                    val silenceScore = if (silenceIdx != -1 && silenceIdx < probabilities.size) probabilities[silenceIdx] else 0f
+
+                    if (maxProb >= requiredThreshold && maxProb > silenceScore) {
+                        val command = when (bestLabel) {
                             "go" -> VoiceCommand.PLAY
                             "stop" -> VoiceCommand.PAUSE
                             "right" -> VoiceCommand.SKIP
@@ -248,7 +257,7 @@ class LiteRtKeywordEngine(
 
                         if (command != VoiceCommand.UNKNOWN) {
                             lastTriggerTime = now
-                            Log.i(TAG, "LiteRT Keyword Detected: $label -> $command (Confidence: ${(maxProb * 100).toInt()}%, threshold: ${(requiredThreshold * 100).toInt()}%)")
+                            Log.i(TAG, "LiteRT Keyword Detected: $bestLabel -> $command (Confidence: ${(maxProb * 100).toInt()}%, threshold: ${(requiredThreshold * 100).toInt()}%)")
                             onCommandDetected(command)
                         }
                     }
