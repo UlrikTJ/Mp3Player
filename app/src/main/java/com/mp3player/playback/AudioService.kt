@@ -269,7 +269,7 @@ class AudioService : Service() {
             mainHandler.post {
                 when (command) {
                     VoiceCommand.PLAY -> {
-                        if (!playerManager.isPlaying.value && requestAudioFocus()) {
+                        if (requestAudioFocus()) {
                             playerManager.resume()
                             playerManager.currentPlayingSong.value?.let { song ->
                                 updateNotification(song, true)
@@ -278,12 +278,10 @@ class AudioService : Service() {
                         }
                     }
                     VoiceCommand.PAUSE -> {
-                        if (playerManager.isPlaying.value) {
-                            playerManager.pause()
-                            playerManager.currentPlayingSong.value?.let { song ->
-                                updateNotification(song, false)
-                                updateWidgetFromService(song, false, playerManager.playbackProgress.value)
-                            }
+                        playerManager.pause()
+                        playerManager.currentPlayingSong.value?.let { song ->
+                            updateNotification(song, false)
+                            updateWidgetFromService(song, false, playerManager.playbackProgress.value)
                         }
                     }
                     VoiceCommand.SKIP -> {

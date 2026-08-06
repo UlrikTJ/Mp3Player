@@ -238,15 +238,18 @@ class LiteRtKeywordEngine(
 
                 if (bestLabel != null) {
                     val requiredThreshold = when (bestLabel) {
-                        "go", "stop" -> 0.40f // Lower threshold for fast triggers
-                        "right", "left" -> 0.50f
+                        "go", "stop" -> 0.35f // Lower threshold for fast triggers
+                        "right", "left" -> 0.45f
                         else -> CONFIDENCE_THRESHOLD
                     }
 
                     val silenceIdx = labels.indexOf("_silence_")
                     val silenceScore = if (silenceIdx != -1 && silenceIdx < probabilities.size) probabilities[silenceIdx] else 0f
 
-                    if (maxProb >= requiredThreshold && maxProb > silenceScore) {
+                    val unknownIdx = labels.indexOf("_unknown_")
+                    val unknownScore = if (unknownIdx != -1 && unknownIdx < probabilities.size) probabilities[unknownIdx] else 0f
+
+                    if (maxProb >= requiredThreshold && maxProb > silenceScore && maxProb > unknownScore) {
                         val command = when (bestLabel) {
                             "go" -> VoiceCommand.PLAY
                             "stop" -> VoiceCommand.PAUSE

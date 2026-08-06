@@ -1,4 +1,4 @@
-﻿package com.mp3player.ui.player
+package com.mp3player.ui.player
 
 import android.content.ComponentName
 import android.content.Context
@@ -147,6 +147,14 @@ fun FullPlayerDialog(song: SongEntity, viewModel: MusicViewModel, onDismiss: () 
     var showTuningSheet by remember { mutableStateOf(false) }
     var showQueueDialog by remember { mutableStateOf(false) }
 
+    var optionsMenuExpanded by remember { mutableStateOf(false) }
+    var showPlaylistPicker by remember { mutableStateOf(false) }
+    var showAppDeleteConfirm by remember { mutableStateOf(false) }
+    var showDeviceDeleteConfirm by remember { mutableStateOf(false) }
+
+    val activePlaylistId by viewModel.activePlaylistId.collectAsState()
+    val playlists by viewModel.allPlaylists.collectAsState()
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
@@ -205,8 +213,45 @@ fun FullPlayerDialog(song: SongEntity, viewModel: MusicViewModel, onDismiss: () 
                         val activePlaylist by viewModel.activePlaylistName.collectAsState()
                         Text(activePlaylist ?: "Library", style = MaterialTheme.typography.bodyMedium, color = Color.White, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
                     }
-                    IconButton(onClick = { /* More options */ }) {
-                        Icon(Icons.Default.MoreVert, contentDescription = "Options", tint = Color.White)
+                    Box {
+                        IconButton(onClick = { optionsMenuExpanded = true }) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "Options", tint = Color.White)
+                        }
+                        DropdownMenu(
+                            expanded = optionsMenuExpanded,
+                            onDismissRequest = { optionsMenuExpanded = false }
+                        ) {
+                            if (activePlaylistId != null) {
+                                DropdownMenuItem(
+                                    text = { Text("Remove from Playlist", color = Color(0xFFE53935)) },
+                                    onClick = {
+                                        optionsMenuExpanded = false
+                                        viewModel.removeSongFromPlaylist(activePlaylistId!!, song.id)
+                                    }
+                                )
+                            }
+                            DropdownMenuItem(
+                                text = { Text("Add to Playlist") },
+                                onClick = {
+                                    optionsMenuExpanded = false
+                                    showPlaylistPicker = true
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Delete from App (Ignore file)") },
+                                onClick = {
+                                    optionsMenuExpanded = false
+                                    showAppDeleteConfirm = true
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Delete from Device", color = Color(0xFFB71C1C)) },
+                                onClick = {
+                                    optionsMenuExpanded = false
+                                    showDeviceDeleteConfirm = true
+                                }
+                            )
+                        }
                     }
                 }
 
@@ -394,6 +439,74 @@ fun FullPlayerDialog(song: SongEntity, viewModel: MusicViewModel, onDismiss: () 
             },
             dismissButton = {
                 TextButton(onClick = { showTuningSheet = false }) { Text("Cancel") }
+            }
+        )
+    }
+    if (showPlaylistPicker) {
+        AlertDialog(
+            onDismissRequest = { showPlaylistPicker = false },
+            title = { Text("Add to Playlist") },
+            text = {
+                Column {
+                    if (playlists.isEmpty()) {
+                        Text("No playlists available", color = Color.Gray)
+                    } else {
+                        playlists.forEach { playlist ->
+                            TextButton(
+                                onClick = {
+                                    viewModel.addSongToPlaylist(playlist.id, song.id)
+                                    showPlaylistPicker = false
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(playlist.name, color = Color.White, modifier = Modifier.fillMaxWidth())
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showPlaylistPicker = false }) { Text("Close") }
+            }
+        )
+    }
+
+    if (showAppDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showAppDeleteConfirm = false },
+            title = { Text("Remove from App?") },
+            text = { Text("This will hide '${song.title}' from the app without deleting the original audio file.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.deleteSongFromApp(song)
+                    showAppDeleteConfirm = false
+                    onDismiss()
+                }) {
+                    Text("Remove", color = Color.Red)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAppDeleteConfirm = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    if (showDeviceDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeviceDeleteConfirm = false },
+            title = { Text("Delete from Device?") },
+            text = { Text("This will permanently delete '${song.title}' from your storage. This action cannot be undone.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.deleteSongFromDevice(song)
+                    showDeviceDeleteConfirm = false
+                    onDismiss()
+                }) {
+                    Text("Delete Permanently", color = Color(0xFFB71C1C))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeviceDeleteConfirm = false }) { Text("Cancel") }
             }
         )
     }
