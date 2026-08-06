@@ -3,6 +3,8 @@ package com.mp3player.playback
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.media.audiofx.AcousticEchoCanceler
+import android.media.audiofx.NoiseSuppressor
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
@@ -24,6 +26,7 @@ import java.nio.channels.FileChannel
 /**
  * Offline Keyword Spotting Engine powered by Google LiteRT (TensorFlow Lite successor).
  * Uses Google's Speech Commands conv_actions model recognizing "go", "stop", "right", "left".
+ * Features hardware Acoustic Echo Cancellation (AEC) to eliminate speaker feedback.
  */
 class LiteRtKeywordEngine(
     private val context: Context,
@@ -42,6 +45,8 @@ class LiteRtKeywordEngine(
     private var labels = listOf<String>()
     private var isListening = false
     private var audioRecord: AudioRecord? = null
+    private var acousticEchoCanceler: AcousticEchoCanceler? = null
+    private var noiseSuppressor: NoiseSuppressor? = null
     private var workerJob: Job? = null
     private var lastTriggerTime = 0L
 
@@ -84,8 +89,9 @@ class LiteRtKeywordEngine(
                 AudioFormat.ENCODING_PCM_16BIT
             ).coerceAtLeast(SAMPLE_RATE * 2)
 
+            // Use VOICE_COMMUNICATION source which engages Android OS VoIP pipeline with hardware Acoustic Echo Cancellation
             audioRecord = AudioRecord(
-                MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                MediaRecorder.AudioSource.VOICE_COMMUNICATION,
                 SAMPLE_RATE,
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,
@@ -93,8 +99,44 @@ class LiteRtKeywordEngine(
             )
 
             if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
+                // Fallback to VOICE_RECOGNITION if VOICE_COMMUNICATION fails on specific hardware
+                audioRecord = AudioRecord(
+                    MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                    SAMPLE_RATE,
+                    AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT,
+                    minBufferSize
+                )
+            }
+
+            if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
                 Log.e(TAG, "AudioRecord failed to initialize.")
                 return
+            }
+
+            // Enable Hardware Acoustic Echo Cancellation (AEC) to cancel speaker output from microphone input
+            val sessionId = audioRecord?.audioSessionId ?: 0
+            if (sessionId != 0) {
+                if (AcousticEchoCanceler.isAvailable()) {
+                    try {
+                        acousticEchoCanceler = AcousticEchoCanceler.create(sessionId)?.apply {
+                            enabled = true
+                        }
+                        Log.d(TAG, "Hardware AcousticEchoCanceler enabled.")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to enable AcousticEchoCanceler: ${e.message}")
+                    }
+                }
+                if (NoiseSuppressor.isAvailable()) {
+                    try {
+                        noiseSuppressor = NoiseSuppressor.create(sessionId)?.apply {
+                            enabled = true
+                        }
+                        Log.d(TAG, "Hardware NoiseSuppressor enabled.")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to enable NoiseSuppressor: ${e.message}")
+                    }
+                }
             }
 
             audioRecord?.startRecording()
@@ -103,7 +145,7 @@ class LiteRtKeywordEngine(
             workerJob = CoroutineScope(Dispatchers.Default).launch {
                 processAudioStream()
             }
-            Log.d(TAG, "LiteRtKeywordEngine started listening.")
+            Log.d(TAG, "LiteRtKeywordEngine started listening with AEC.")
         } catch (e: Exception) {
             Log.e(TAG, "Error starting LiteRtKeywordEngine: ${e.message}", e)
             stopListening()
@@ -117,6 +159,11 @@ class LiteRtKeywordEngine(
         workerJob = null
 
         try {
+            acousticEchoCanceler?.release()
+            acousticEchoCanceler = null
+            noiseSuppressor?.release()
+            noiseSuppressor = null
+
             audioRecord?.apply {
                 if (recordingState == AudioRecord.RECORDSTATE_RECORDING) {
                     stop()

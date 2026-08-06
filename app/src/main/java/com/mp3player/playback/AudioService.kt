@@ -264,37 +264,40 @@ class AudioService : Service() {
             e.printStackTrace()
         }
 
+        val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
         voiceCommandManager = VoiceCommandManager(this) { command ->
-            when (command) {
-                VoiceCommand.PLAY -> {
-                    if (!playerManager.isPlaying.value && requestAudioFocus()) {
-                        playerManager.resume()
-                        playerManager.currentPlayingSong.value?.let { song ->
-                            updateNotification(song, true)
-                            updateWidgetFromService(song, true, playerManager.playbackProgress.value)
+            mainHandler.post {
+                when (command) {
+                    VoiceCommand.PLAY -> {
+                        if (!playerManager.isPlaying.value && requestAudioFocus()) {
+                            playerManager.resume()
+                            playerManager.currentPlayingSong.value?.let { song ->
+                                updateNotification(song, true)
+                                updateWidgetFromService(song, true, playerManager.playbackProgress.value)
+                            }
                         }
                     }
-                }
-                VoiceCommand.PAUSE -> {
-                    if (playerManager.isPlaying.value) {
-                        playerManager.pause()
-                        playerManager.currentPlayingSong.value?.let { song ->
-                            updateNotification(song, false)
-                            updateWidgetFromService(song, false, playerManager.playbackProgress.value)
+                    VoiceCommand.PAUSE -> {
+                        if (playerManager.isPlaying.value) {
+                            playerManager.pause()
+                            playerManager.currentPlayingSong.value?.let { song ->
+                                updateNotification(song, false)
+                                updateWidgetFromService(song, false, playerManager.playbackProgress.value)
+                            }
                         }
                     }
-                }
-                VoiceCommand.SKIP -> {
-                    if (onSkipNextListener != null) {
-                        onSkipNextListener?.invoke()
-                    } else {
-                        onTrackEndedListener?.invoke()
+                    VoiceCommand.SKIP -> {
+                        if (onSkipNextListener != null) {
+                            onSkipNextListener?.invoke()
+                        } else {
+                            onTrackEndedListener?.invoke()
+                        }
                     }
+                    VoiceCommand.PREVIOUS -> {
+                        onSkipPreviousListener?.invoke()
+                    }
+                    VoiceCommand.UNKNOWN -> {}
                 }
-                VoiceCommand.PREVIOUS -> {
-                    onSkipPreviousListener?.invoke()
-                }
-                VoiceCommand.UNKNOWN -> {}
             }
         }
 
