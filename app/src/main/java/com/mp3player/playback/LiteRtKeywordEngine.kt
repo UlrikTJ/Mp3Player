@@ -8,6 +8,7 @@ import android.media.audiofx.NoiseSuppressor
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
 import androidx.core.content.ContextCompat
@@ -48,7 +49,9 @@ class LiteRtKeywordEngine(
     private var acousticEchoCanceler: AcousticEchoCanceler? = null
     private var noiseSuppressor: NoiseSuppressor? = null
     private var workerJob: Job? = null
+    private var wakeLock: PowerManager.WakeLock? = null
     private var lastTriggerTime = 0L
+    private var lastDebugLogTime = 0L
 
     init {
         loadModelAndLabels()
@@ -142,6 +145,19 @@ class LiteRtKeywordEngine(
             audioRecord?.startRecording()
             isListening = true
 
+            // Acquire a partial wake lock so the CPU stays on and the mic keeps
+            // recording even when the screen is off.
+            try {
+                val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+                wakeLock = pm.newWakeLock(
+                    PowerManager.PARTIAL_WAKE_LOCK,
+                    "Mp3Player::VoiceCommandWakeLock"
+                ).apply { acquire() }
+                Log.d(TAG, "PARTIAL_WAKE_LOCK acquired for voice control.")
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to acquire wake lock: ${e.message}")
+            }
+
             workerJob = CoroutineScope(Dispatchers.Default).launch {
                 processAudioStream()
             }
@@ -155,6 +171,16 @@ class LiteRtKeywordEngine(
     fun stopListening() {
         if (!isListening) return
         isListening = false
+
+        try {
+            wakeLock?.let {
+                if (it.isHeld) it.release()
+            }
+            wakeLock = null
+            Log.d(TAG, "PARTIAL_WAKE_LOCK released.")
+        } catch (e: Exception) {
+            Log.w(TAG, "Error releasing wake lock: ${e.message}")
+        }
         workerJob?.cancel()
         workerJob = null
 
@@ -220,14 +246,28 @@ class LiteRtKeywordEngine(
                 interp.runForMultipleInputsOutputs(inputs, outputs)
                 val probabilities = outputScores[0]
 
+                // ── Diagnostic: dump full probability distribution every ~2s ──
+                val debugInterval = 2000L
+                if (now - lastDebugLogTime >= debugInterval) {
+                    lastDebugLogTime = now
+                    val sb = StringBuilder("LiteRT scores (${probabilities.size} outputs, ${labels.size} labels):")
+                    for (i in probabilities.indices) {
+                        val lbl = if (i < labels.size) labels[i] else "?idx$i"
+                        sb.append(" [$lbl=${String.format("%.3f", probabilities[i])}]")
+                    }
+                    Log.d(TAG, sb.toString())
+                }
+
                 var bestLabel: String? = null
                 var maxProb = 0.0f
 
-                // Evaluate ONLY our 4 target commands so unused model outputs (up, down, yes, no, on, off) can NEVER block detection
+                // Evaluate our 4 target commands + "up" (which the model frequently
+                // confuses with "stop" because they share the same plosive ending).
+                // "up" is treated as an alias for "stop" → PAUSE.
                 for (i in probabilities.indices) {
                     if (i < labels.size) {
                         val label = labels[i]
-                        if (label == "go" || label == "stop" || label == "right" || label == "left") {
+                        if (label == "go" || label == "stop" || label == "right" || label == "left" || label == "up") {
                             if (probabilities[i] > maxProb) {
                                 maxProb = probabilities[i]
                                 bestLabel = label
@@ -239,6 +279,7 @@ class LiteRtKeywordEngine(
                 if (bestLabel != null) {
                     val requiredThreshold = when (bestLabel) {
                         "go", "stop" -> 0.35f // Lower threshold for fast triggers
+                        "up" -> 0.55f         // Higher threshold for "up" alias to avoid false positives
                         "right", "left" -> 0.45f
                         else -> CONFIDENCE_THRESHOLD
                     }
@@ -252,7 +293,7 @@ class LiteRtKeywordEngine(
                     if (maxProb >= requiredThreshold && maxProb > silenceScore && maxProb > unknownScore) {
                         val command = when (bestLabel) {
                             "go" -> VoiceCommand.PLAY
-                            "stop" -> VoiceCommand.PAUSE
+                            "stop", "up" -> VoiceCommand.PAUSE  // "up" is an alias for "stop"
                             "right" -> VoiceCommand.SKIP
                             "left" -> VoiceCommand.PREVIOUS
                             else -> VoiceCommand.UNKNOWN
